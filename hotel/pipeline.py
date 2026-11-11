@@ -1,0 +1,189 @@
+"""Temporal experiment, interpretation and dashboard payload."""
+from datetime import date
+import hashlib
+import json
+
+import numpy as np
+
+from .features import FeatureStore, LABELS, TARGETS, UNITS
+from .models import GRID, NAMES, bound, fit, predict, scores
+from .sources import DAY, days
+from .storage import fingerprint, journal
+
+VERSION = "1.0.0"
+
+
+def split(cfg, anchor):
+    h = cfg["horizon"]
+    start = date.fromisoformat(cfg["start"]) + 35*DAY
+    fit_end = anchor - (cfg["validation_days"] + cfg["test_days"])*DAY
+    val_end = anchor - cfg["test_days"]*DAY
+    train = list(days(start, fit_end - h*DAY))[::cfg["train_stride"]]
+    val = list(days(fit_end, val_end - h*DAY))[::h]
+    test = list(days(val_end, anchor - h*DAY))[::h]
+    refit = list(days(start, val_end - h*DAY))[::cfg["train_stride"]]
+    if not (train and val and test):
+        raise ValueError("Недостаточно истории для хронологического разбиения.")
+    return (train, val, test, refit), (fit_end, val_end, anchor)
+
+
+def datasets(fs, cfg, anchor):
+    origins, ends = split(cfg, anchor)
+    return [fs.dataset(o, cfg["horizon"], d) for o, d in zip(origins, (*ends, ends[1]))], ends
+
+
+def subset(data, i):
+    x, y, _, meta = data
+    good = np.isfinite(y[:, i])
+    return x[good], y[good, i], [m for m, keep in zip(meta, good) if keep]
+
+
+def columns(fs, i):
+    return fs.names.index(f"{LABELS[TARGETS[i]]}: тот же день недели")
+
+
+def canonical(obj):
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def experiment(db, cfg, anchor, digest, i, family, params, metrics):
+    spec = [VERSION, cfg, str(anchor), digest, TARGETS[i], family, params]
+    eid = hashlib.sha256(canonical(spec).encode()).hexdigest()[:14]
+    with db:
+        db.execute("INSERT OR IGNORE INTO experiments VALUES(?,?,?,?,?,?,?,?,?)", (
+            eid, digest, TARGETS[i], family, canonical({"model": params, "config": cfg}),
+            cfg["seed"], str(anchor), canonical(metrics), VERSION))
+    return dict(id=eid, family=family, label=NAMES[family], params=params, validation=metrics)
+
+
+def importance(model, x, y, fs, t, seed, meta):
+    con = np.abs(model.contrib(x))
+    base = scores(y, predict(model, x, t))["mae"]
+    rng = np.random.default_rng(seed)
+    rows = []
+    mid = len(x)//2
+    # Consecutive, equally sized collections of forecast origins.
+    midpoint = sorted({r[0] for r in meta})
+    cut = midpoint[len(midpoint)//2]
+    early = np.array([r[0] < cut for r in meta])
+    if not early.any() or early.all():
+        early = np.arange(len(x)) < mid
+    for j, name in enumerate(fs.names):
+        diffs = []
+        for _ in range(3):
+            shuffled = x.copy()
+            shuffled[:, j] = rng.permutation(shuffled[:, j])
+            diffs.append(scores(y, predict(model, shuffled, t))["mae"]-base)
+        rows.append(dict(name=name, native=float(con[:, j].mean()), permutation=float(np.mean(diffs)),
+                         early=float(con[early, j].mean()), late=float(con[~early, j].mean())))
+    j = fs.event_start + 4
+    grid = np.unique(np.quantile(x[:, j], np.linspace(0, .98, 11)))
+    if len(grid) < 2:
+        grid = np.array([0., 1.])
+    curve = []
+    for value in grid:
+        changed = x.copy()
+        changed[:, j] = value
+        curve.append(dict(value=float(value), prediction=float(predict(model, changed, t).mean())))
+    return sorted(rows, key=lambda r: -r["native"]), curve
+
+
+def run(db, cfg, as_of, public=False):
+    anchor = date.fromisoformat(cfg["as_of"])
+    if as_of < anchor:
+        raise ValueError("Дата запуска должна быть не раньше опорной даты эксперимента из config.json.")
+    fs = FeatureStore(db, cfg, as_of)
+    h = cfg["horizon"]
+    sets, ends = datasets(fs, cfg, anchor)
+    digest = fingerprint(db, anchor)
+    actual_origins = list(days(fs.start + 35*DAY, as_of-h*DAY))[::cfg["train_stride"]]
+    latest = fs.dataset(actual_origins, h, as_of)
+    source = "kudago_json" if public else "event_html"
+    forecast_dates = list(days(as_of + DAY, as_of + h*DAY))
+    output = dict(as_of=str(as_of), horizon=h, event_source=source, data_hash=digest, version=VERSION,
+                  hotels=list(fs.hotels.values()), features=fs.names, targets={}, history={}, forecast={},
+                  backtest={}, journal=journal(db),
+                  splits=dict(start=cfg["start"], train_end=str(ends[0]), validation_end=str(ends[1]),
+                              test_end=str(ends[2]), test_origins=len(set(m[0] for m in sets[2][3]))),
+                  counts={table: db.execute(f"SELECT COUNT(*) FROM {table} WHERE {field}<=?", (str(as_of),)).fetchone()[0]
+                          for table, field in (("rooms", "day"), ("events", "published"), ("raw", "slice"))})
+    for hotel in fs.hotels:
+        output["history"][hotel] = [
+            dict(date=str(d), **dict(zip(TARGETS, fs.facts[hotel].get(d, (None, None)))))
+            for d in days(as_of-89*DAY, as_of)]
+        output["forecast"][hotel] = [dict(date=str(d), events=[
+            {k: e[k] for k in ("title", "venue", "kind")} for e in fs.available_events(as_of, d, source)])
+            for d in forecast_dates]
+        output["backtest"][hotel] = {}
+    for i, target in enumerate(TARGETS):
+        (x, y, _), (vx, vy, _), (tx, ty, tm), (rx, ry, _) = [subset(d, i) for d in sets]
+        col = columns(fs, i)
+        candidates = []
+        for family, params_grid in GRID.items():
+            for params in params_grid:
+                model = fit(family, params, x, y, col)
+                validation = scores(vy, predict(model, vx, target))
+                candidates.append(experiment(db, cfg, anchor, digest, i, family, params, validation))
+        key = lambda r: (r["validation"]["mae"], r["validation"]["rmse"])
+        winner = min(candidates, key=key)
+        final_rows, predictions = [], {}
+        for family in GRID:
+            r = min((q for q in candidates if q["family"] == family), key=key).copy()
+            m = fit(family, r["params"], rx, ry, col)
+            pp = predict(m, tx, target)
+            r["test"] = scores(ty, pp)
+            final_rows.append(r)
+            predictions[family] = pp
+            if family == winner["family"]:
+                test_model = m
+        pp = predictions[winner["family"]]
+        chosen = next(r for r in final_rows if r["id"] == winner["id"])
+        base = next(r for r in final_rows if r["family"] == "seasonal")
+        early = np.array([(d-o).days <= 7 for o, _, d in tm])
+        segmented = {"1–7": scores(ty[early], pp[early]), "8–14": scores(ty[~early], pp[~early])}
+        importance_rows, pdp = importance(test_model, tx, ty, fs, target, cfg["seed"], tm)
+        # Same selected family and parameters; drop the event block, refit, compare.
+        ablation = fit(winner["family"], winner["params"], rx[:, :fs.event_start], ry, col)
+        without = scores(ty, predict(ablation, tx[:, :fs.event_start], target))
+        output["targets"][target] = dict(label=LABELS[target], unit=UNITS[target], winner=chosen,
+            baseline=base, candidates=candidates, finalists=final_rows, by_horizon=segmented,
+            importance=importance_rows, pdp=pdp, without_events=without,
+            samples=dict(train=len(y), validation=len(vy), test=len(ty)))
+        for hotel in fs.hotels:
+            output["backtest"][hotel][target] = [
+                dict(date=str(d), origin=str(o), fact=float(a), model=float(b), baseline=float(c))
+                for (o, hh, d), a, b, c in zip(tm, ty, pp, predictions["seasonal"]) if hh == hotel]
+        lx, ly, _ = subset(latest, i)
+        model = fit(winner["family"], winner["params"], lx, ly, col)
+        for hotel in fs.hotels:
+            fx = np.asarray([fs.row(hotel, as_of, d, source)[0] for d in forecast_dates])
+            contributions = model.contrib(fx)
+            raw = model.intercept + contributions.sum(axis=1)
+            bounded = bound(raw, target)
+            for row, pr, unbounded, cs, b in zip(output["forecast"][hotel], bounded, raw, contributions, fx[:, col]):
+                row[target] = dict(value=float(pr), baseline=float(b), intercept=float(model.intercept),
+                                   clip=float(pr-unbounded),
+                                   contributions=[float(v) for v in cs])
+    return output
+
+
+def replay(db, eid):
+    r = db.execute("SELECT * FROM experiments WHERE id=?", (eid,)).fetchone()
+    if r is None:
+        raise ValueError("Неизвестный ID эксперимента. Сначала выполните build.")
+    if r["version"] != VERSION:
+        raise ValueError("Для воспроизведения нужна сохранённая версия кода.")
+    spec = json.loads(r["params"])
+    cfg, params = spec["config"], spec["model"]
+    anchor = date.fromisoformat(r["cutoff"])
+    if fingerprint(db, anchor) != r["data_hash"]:
+        raise ValueError("Версия исходных данных не совпадает с журналом.")
+    fs = FeatureStore(db, cfg, anchor)
+    origins, ends = split(cfg, anchor)
+    t, i = r["target"], TARGETS.index(r["target"])
+    x, y, _ = subset(fs.dataset(origins[0], cfg["horizon"], ends[0]), i)
+    vx, vy, _ = subset(fs.dataset(origins[1], cfg["horizon"], ends[1]), i)
+    m = fit(r["family"], params, x, y, columns(fs, i))
+    actual, expected = scores(vy, predict(m, vx, t)), json.loads(r["metrics"])
+    ok = all(abs(actual[k]-expected[k]) < 1e-7 for k in actual)
+    return dict(id=eid, validation=actual, expected=expected, reproduced=ok)

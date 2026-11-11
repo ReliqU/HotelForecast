@@ -1,0 +1,17 @@
+{
+  "start": "2023-01-01",
+  "as_of": "2026-11-11",
+  "horizon": 14,
+  "seed": 17,
+  "train_stride": 5,
+  "validation_days": 112,
+  "test_days": 112,
+  "event_url": "https://kudago.com/public-api/v1.4/events/",
+  "request_timeout": 10,
+  "request_retries": 3,
+  "hotels": [
+    {"id": "center", "name": "Центр", "rooms": 120, "rate": 7600, "lat": 55.753, "lon": 37.614},
+    {"id": "expo", "name": "Экспо", "rooms": 156, "rate": 6800, "lat": 55.748, "lon": 37.548},
+    {"id": "park", "name": "Парк", "rooms": 82, "rate": 5400, "lat": 55.793, "lon": 37.678}
+  ]
+}
