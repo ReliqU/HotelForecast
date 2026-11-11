@@ -8,14 +8,17 @@ from unittest.mock import patch
 
 import numpy as np
 
+from hotel.archive import ARCHIVE_SOURCE, parse_archive
 from hotel.cli import ROOT, render
 from hotel.features import FeatureStore
 from hotel.pipeline import replay, run, split
 from hotel.sources import DAY, html_feed, parse_html, parse_public, room_feed
-from hotel.storage import connect, fingerprint, ingest, ingest_public, normalize_rooms
+from hotel.storage import connect, fingerprint, ingest, ingest_archive, ingest_public, normalize_rooms
+from hotel.stress import scenario_sets
 
 CFG = json.loads((ROOT/"config.json").read_text(encoding="utf-8"))
 ANCHOR = date.fromisoformat(CFG["as_of"])
+ARCHIVE = ROOT/"data"/"public_events.json"
 
 
 class Inputs(unittest.TestCase):
@@ -50,6 +53,13 @@ class Inputs(unittest.TestCase):
         self.assertEqual(room_feed(CFG, ANCHOR), room_feed(CFG, ANCHOR))
         self.assertEqual(html_feed(CFG, ANCHOR), html_feed(CFG, ANCHOR))
 
+    def test_archive_rejects_unconfirmed_availability(self):
+        obj = json.loads(ARCHIVE.read_text(encoding="utf-8"))
+        row = next(r for r in obj["events"] if r["availability_basis"] == "observed")
+        row["available_from"] = str(ANCHOR-DAY)
+        with self.assertRaisesRegex(ValueError,"дата доступности"):
+            parse_archive(json.dumps(obj))
+
     def test_temporal_split_has_no_label_overlap_across_periods(self):
         (train, val, test, refit), (fit_end, val_end, _) = split(CFG, ANCHOR)
         self.assertLessEqual(train[-1]+14*DAY, fit_end)
@@ -67,6 +77,8 @@ class Integration(unittest.TestCase):
         cls.db = connect(Path(cls.tmp.name)/"test.sqlite", CFG)
         cls.addClassCleanup(cls.db.close)
         cls.initial = ingest(cls.db, CFG, ANCHOR)
+        if not ingest_archive(cls.db,ARCHIVE,ANCHOR):
+            raise AssertionError("bundled archive failed to load")
         cls.data = run(cls.db, CFG, ANCHOR)
 
     def test_ingestion_is_incremental(self):
@@ -116,6 +128,56 @@ class Integration(unittest.TestCase):
         finally:
             self.db.rollback()
 
+    def test_seasonal_median_skips_missing_and_ignores_future(self):
+        with closing(connect(":memory:",CFG)) as db:
+            # Four same weekdays include a missing row; a wrong weekday and a
+            # future row have extreme values but cannot change the median.
+            for offset, sold in ((0,20),(7,90),(14,None),(21,50),(1,99),(-7,100)):
+                db.execute("INSERT INTO rooms VALUES (?,?,?,?,?)",
+                           ("center",str(ANCHOR-offset*DAY),100,sold,None))
+            fs=FeatureStore(db,CFG,ANCHOR+7*DAY)
+            self.assertEqual(fs.seasonal("center",ANCHOR,ANCHOR+7*DAY,0),(20.,50.))
+
+    def test_archive_idempotence_and_provenance_gate(self):
+        before=fingerprint(self.db,ANCHOR)
+        self.assertTrue(ingest_archive(self.db,ARCHIVE,ANCHOR))
+        self.assertEqual(self.db.execute("SELECT added_slices FROM loads ORDER BY id DESC LIMIT 1").fetchone()[0],0)
+        self.assertEqual(fingerprint(self.db,ANCHOR),before)
+        fs=FeatureStore(self.db,CFG,ANCHOR)
+        day=date(2026,11,17)
+        old=fs.available_events(ANCHOR-2*DAY,day,ARCHIVE_SOURCE)
+        after_publication=fs.available_events(ANCHOR-DAY,day,ARCHIVE_SOURCE)
+        current=fs.available_events(ANCHOR,day,ARCHIVE_SOURCE)
+        self.assertEqual(len(old),0)
+        self.assertEqual([e["title"] for e in after_publication],["CleanExpo Moscow 2026"])
+        self.assertEqual({e["basis"] for e in current},{"published","observed"})
+        self.assertTrue(all(e["url"].startswith("https://") for e in current))
+        self.assertEqual(len(self.data["archive"]["events"]),5)
+        ix=(day-ANCHOR).days-1
+        public=self.data["forecasts"][ARCHIVE_SOURCE]["center"][ix]
+        synthetic=self.data["forecasts"]["event_html"]["center"][ix]
+        self.assertEqual(len(public["events"]),2)
+        self.assertNotAlmostEqual(public["occupancy"]["value"],synthetic["occupancy"]["value"])
+        self.assertEqual(public["occupancy"]["baseline"],synthetic["occupancy"]["baseline"])
+
+    def test_stress_scenarios_are_paired_and_isolated(self):
+        before=self.db.execute("SELECT COUNT(*) FROM rooms").fetchone()[0]
+        sets, meta=scenario_sets(self.db,CFG,ANCHOR)
+        x,y,_,rows=sets["control"][0]
+        late_x,late_y,_,late_rows=sets["late"][0]
+        weak_x,weak_y,_,weak_rows=sets["weak"][0]
+        self.assertEqual(rows,late_rows)
+        self.assertEqual(rows,weak_rows)
+        self.assertEqual(meta["start"],str(ANCHOR+DAY))
+        self.assertTrue(all(d>ANCHOR and o>=ANCHOR for o,_,d in rows))
+        np.testing.assert_array_equal(y,late_y)
+        np.testing.assert_array_equal(x[:,:-5],late_x[:,:-5])
+        np.testing.assert_array_equal(x[:,-5:],weak_x[:,-5:])
+        self.assertTrue(np.any(x[:,-5:]!=late_x[:,-5:]))
+        self.assertFalse(np.array_equal(y,weak_y,equal_nan=True))
+        self.assertGreater(sets["late"][1]["shifted"],0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM rooms").fetchone()[0],before)
+
     def test_explanations_reconcile_and_forecasts_are_valid(self):
         for rows in self.data["forecast"].values():
             self.assertEqual(len(rows), 14)
@@ -129,7 +191,8 @@ class Integration(unittest.TestCase):
 
     def test_model_selection_and_replay(self):
         for t in self.data["targets"].values():
-            self.assertEqual(len(t["finalists"]), 3)
+            self.assertEqual({r["family"] for r in t["finalists"]}, {"seasonal","median","ridge","boost"})
+            self.assertEqual(t["baseline"]["family"],"median")
             self.assertEqual(t["winner"]["id"], min(t["candidates"], key=lambda r: r["validation"]["mae"])["id"])
             self.assertTrue(replay(self.db, t["winner"]["id"])["reproduced"])
             self.assertGreater(t["samples"]["test"], 300)

@@ -6,6 +6,7 @@
   "train_stride": 5,
   "validation_days": 112,
   "test_days": 112,
+  "stress": {"days": 112, "event_scale": 0.35, "late_share": 0.65, "notice_days": 2},
   "event_url": "https://kudago.com/public-api/v1.4/events/",
   "request_timeout": 10,
   "request_retries": 3,

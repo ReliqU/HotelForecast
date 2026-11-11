@@ -1,0 +1,60 @@
+{
+  "snapshot_date": "2026-11-11",
+  "events": [
+    {
+      "id": "rail-model-2026",
+      "title": "Железнодорожная модель 2026",
+      "summary": "Выставка действующих макетов и моделей железной дороги.",
+      "venue": "ВДНХ, павильон 53",
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "available_from": "2026-11-11",
+      "availability_basis": "observed",
+      "url": "https://gon-museum.ru/jd2026"
+    },
+    {
+      "id": "cleanexpo-2026",
+      "title": "CleanExpo Moscow 2026",
+      "summary": "Профессиональная выставка оборудования и средств для индустрии чистоты.",
+      "venue": "Крокус Экспо, павильон 1",
+      "start": "2026-11-17",
+      "end": "2026-11-19",
+      "available_from": "2026-11-10",
+      "availability_basis": "published",
+      "url": "https://www.cleanexpo-moscow.ru/ru-RU/press/news/10779.aspx"
+    },
+    {
+      "id": "biot-2026",
+      "title": "БИОТ 2026",
+      "summary": "Выставка в сфере безопасности и охраны труда.",
+      "venue": "Крокус Экспо",
+      "start": "2026-11-17",
+      "end": "2026-11-20",
+      "available_from": "2026-11-11",
+      "availability_basis": "observed",
+      "url": "https://biot-expo.ru/faqbiot"
+    },
+    {
+      "id": "arca-2026",
+      "title": "АРКА 2026",
+      "summary": "Выставка об архитектуре, реставрации и сохранении культурного наследия.",
+      "venue": "ВДНХ, павильон 20",
+      "start": "2026-11-18",
+      "end": "2026-11-20",
+      "available_from": "2026-11-11",
+      "availability_basis": "observed",
+      "url": "https://expo.vdnh.ru/events/26"
+    },
+    {
+      "id": "mebel-2026",
+      "title": "Мебель 2026",
+      "summary": "Отраслевая выставка мебели, комплектующих и материалов.",
+      "venue": "Крокус Экспо, павильон 3",
+      "start": "2026-11-23",
+      "end": "2026-11-26",
+      "available_from": "2026-07-08",
+      "availability_basis": "published",
+      "url": "https://www.meb-expo.ru/ru/media/news/index.php?id4=20978"
+    }
+  ]
+}

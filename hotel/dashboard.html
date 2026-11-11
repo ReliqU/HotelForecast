@@ -22,11 +22,11 @@ svg{width:100%;height:auto;display:block;overflow:visible}svg text{font:12px "Se
 <header class="mast"><div class="wrap"><div class="brand"><span class="mark" aria-hidden="true"></span> Горизонт</div><div class="tag">Учебный прототип<br>Тема 17 · НИТУ МИСИС</div></div></header>
 <main class="wrap">
 <section class="intro"><div><div class="over" id="asof"></div><h1>Прогноз для гостиниц</h1><p id="mode"></p></div>
-<div class="filters"><label>Гостиница<select id="hotel"></select></label><label>Показатель<select id="target"><option value="occupancy">Загрузка</option><option value="adr">Средняя цена</option></select></label></div></section>
+<div class="filters"><label>Гостиница<select id="hotel"></select></label><label>Показатель<select id="target"><option value="occupancy">Загрузка</option><option value="adr">Средняя цена</option></select></label><label>Афиша<select id="eventMode"></select></label></div></section>
 <div class="metrics" id="metrics"></div>
 <div class="workspace">
   <section class="panel"><div class="row"><h2 id="chartTitle"></h2><div class="tabs"><button id="future" aria-pressed="true">Прогноз</button><button id="test" aria-pressed="false">Проверка</button></div></div><p id="chartNote"></p>
-  <div class="legend"><span><i style="border-color:#35566b"></i>Факт</span><span><i style="border-color:#0c8a77"></i>Выбранная модель</span><span><i class="base" style="border-color:#a46d2d"></i>Сезонный прогноз</span></div>
+  <div class="legend"><span><i style="border-color:#35566b"></i>Факт</span><span><i style="border-color:#0c8a77"></i>Выбранная модель</span><span><i class="base" style="border-color:#a46d2d"></i>Сезонная медиана</span></div>
   <svg id="mainChart" viewBox="0 0 760 286" role="img" aria-label="Ряд фактических и прогнозных значений"></svg>
   <div class="row"><label class="day-label" for="day">Дата: <b id="selectedDate"></b></label><button id="download" class="download">Скачать CSV</button></div>
   <input type="range" id="day" class="days" min="0" value="0" aria-label="Выбор даты на графике">
@@ -35,6 +35,10 @@ svg{width:100%;height:auto;display:block;overflow:visible}svg text{font:12px "Se
 </div>
 <section class="sections">
 <details open><summary>Насколько точен прогноз</summary><div class="inside" id="quality"></div></details>
+<details id="stressPanel"><summary>Стресс-тест на новом периоде</summary><div class="inside" id="stress"></div></details>
+<details id="archivePanel"><summary>Источники публичного архива</summary><div class="inside">
+  <p id="archiveNote"></p><label>Что было известно на дату <input type="date" id="archiveDay"></label>
+  <div id="archive"></div></div></details>
 <details><summary>Какие признаки влияют на прогноз</summary><div class="inside" id="importance"></div></details>
 <details><summary>Эксперименты и журнал загрузок</summary><div class="inside" id="logs"></div></details>
 </section>
@@ -43,15 +47,35 @@ svg{width:100%;height:auto;display:block;overflow:visible}svg text{font:12px "Se
 <script type="application/json" id="payload">__HOTEL_DATA__</script>
 <script>
 'use strict';
-const $=id=>document.getElementById(id), F=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}),
+const $=id=>document.getElementById(id),
   D=new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'short',timeZone:'UTC'});
 const num=(v,d=1)=>v==null?'—':new Intl.NumberFormat('ru-RU',{maximumFractionDigits:d}).format(v);
 const dateLabel=d=>D.format(new Date(d+'T00:00:00Z'));
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data=JSON.parse($('payload').textContent), view='future', idx=0, current=null;
 const sign=(v,d)=> (v>0?'+':'')+num(v,d);
-function init(){const last=$('hotel').value; $('hotel').innerHTML=data.hotels.map(h=>'<option value="'+escape(h.id)+'">'+escape(h.name)+'</option>').join('');
-if(data.hotels.some(h=>h.id===last))$('hotel').value=last; paint();}
+const modeNames={event_html:'Учебная',public_archive:'Публичный архив',kudago_json:'KudaGo'};
+function init(){const last=$('hotel').value, prior=$('eventMode').value;
+  $('hotel').innerHTML=data.hotels.map(h=>'<option value="'+escape(h.id)+'">'+escape(h.name)+'</option>').join('');
+  $('eventMode').innerHTML=Object.keys(data.forecasts).map(m=>'<option value="'+escape(m)+'">'+escape(modeNames[m])+'</option>').join('');
+  if(data.hotels.some(h=>h.id===last))$('hotel').value=last;
+  $('eventMode').value=prior in data.forecasts?prior:data.event_source;
+  $('archivePanel').hidden=!data.archive;
+  $('archiveDay').max=data.as_of;
+  if(!$('archiveDay').value || $('archiveDay').value>data.as_of)$('archiveDay').value=data.as_of;
+  paintArchive();
+  paint();}
+const basis=e=>e.basis==='published'?'опубликовано':'зафиксировано';
+const eventLink=e=>e.url?.startsWith('https://')?'<a href="'+escape(e.url)+'" target="_blank" rel="noopener noreferrer">'+escape(e.title)+'</a>':escape(e.title);
+function paintArchive(){
+  if(!data.archive)return;
+  const cutoff=$('archiveDay').value||data.as_of, rows=data.archive.events.filter(e=>e.available_from<=cutoff);
+  $('archiveNote').textContent='Снимок от '+data.archive.snapshot+
+    '. Дата фильтра меняет только этот список. Если издатель не указал дату публикации, используем дату первого наблюдения.';
+  $('archive').innerHTML=rows.length?'<ul>'+rows.map(e=>'<li>'+eventLink(e)+' · '+escape(e.venue)+' · '+
+    escape(e.start)+' — '+escape(e.end)+' <span class="micro">('+basis(e)+' '+escape(e.available_from)+')</span></li>').join('')+
+    '</ul>':'<p>На выбранную дату ни одна запись из этого архива не была доступна.</p>';
+}
 const grid=(header,rows,chosen=()=>false)=>'<div class="scroller"><table><thead><tr>'+header.map(x=>'<th>'+escape(x)+'</th>').join('')+
   '</tr></thead><tbody>'+rows.map((r,i)=>'<tr class="'+(chosen(i)?'win':'')+'">'+r.map(x=>'<td>'+escape(x)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
 function plot(rows, series, opt){
@@ -75,11 +99,15 @@ function plot(rows, series, opt){
 }
 function paint(){
   const h=$('hotel').value,t=$('target').value, isOcc=t==='occupancy', q=data.targets[t], d=isOcc?1:0, suffix=isOcc?'%':' ₽', unit=q.unit;
-  const forecast=data.forecast[h], tests=data.backtest[h][t], all=view==='future'?forecast:tests;
+  const mode=$('eventMode').value, forecast=data.forecasts[mode][h], tests=data.backtest[h][t], all=view==='future'?forecast:tests;
   idx=Math.max(0,Math.min(idx,all.length-1)); const selected=all[idx];
   const display=v=>num(v,d)+suffix, error=v=>num(v,d)+' '+unit;
   $('asof').textContent='Дата расчёта · '+dateLabel(data.as_of)+' '+data.as_of.slice(0,4);
-  $('mode').textContent=data.event_source==='event_html'?'Загрузка и цена на 14 дней. Учебные гостиницы и афиша смоделированы.':'Загрузка и цена на 14 дней. Гостиницы смоделированы, для будущих дат подключена афиша KudaGo. Режим экспериментальный.';
+  $('mode').textContent=view==='test'?'Отложенный тест на учебных гостиницах и синтетической афише.':
+    {event_html:'Загрузка и цена на 14 дней. Учебные гостиницы и афиша смоделированы.',
+    public_archive:'Открытые анонсы организаторов и учебные гостиницы. Архив выборочный, качество прогноза на нём не измерялось.',
+    kudago_json:'Учебные гостиницы, для будущих дат подключена афиша KudaGo. Режим экспериментальный.'}[mode];
+  $('eventMode').disabled=view==='test';
   const avg=forecast.reduce((a,r)=>a+r[t].value,0)/forecast.length, peak=forecast.reduce((a,b)=>a[t].value>b[t].value?a:b), saved=q.baseline.test.mae-q.winner.test.mae;
   $('metrics').innerHTML=[['Среднее за 14 дней',display(avg),'По прогнозу выбранной гостиницы'],['Пиковый день',display(peak[t].value),dateLabel(peak.date)],['Ошибка модели на тесте',error(q.winner.test.mae),'MAE по всем гостиницам']].map(v=>'<div class="metric"><span>'+v[0]+'</span><strong>'+v[1]+'</strong><small>'+v[2]+'</small></div>').join('');
   $('chartTitle').textContent=view==='future'?'План на ближайшие 14 дней':'Проверка на отложенном периоде';
@@ -94,13 +122,22 @@ function paint(){
     const p=selected[t], ranked=data.features.map((name,i)=>[name,p.contributions[i]]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
     const vmax=Math.max(...ranked.map(v=>Math.abs(v[1])),.001);
     const driver=([name,v])=>'<div class="driver"><span>'+escape(name)+'</span><span class="track"><i style="width:'+100*Math.abs(v)/vmax+'%"></i></span><em>'+sign(v,d)+' '+unit+'</em></div>';
-    const events=selected.events.length?'<ul>'+selected.events.map(e=>'<li>'+escape(e.title)+(e.venue?' · '+escape(e.venue):'')+'</li>').join('')+'</ul>':'<p>На дату расчёта анонсов в выбранном источнике нет.</p>';
+    const events=selected.events.length?'<ul>'+selected.events.map(e=>'<li>'+eventLink(e)+(e.venue?' · '+escape(e.venue):'')+
+      (e.basis?'<br><span class="micro">'+basis(e)+' '+escape(e.available_from)+'</span>':'')+'</li>').join('')+'</ul>':
+      '<p>В выбранной афише на эту дату нет доступных записей.</p>';
     $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(p.value)+'</div><div class="micro">'+escape(loc)+'</div><h3>Главные факторы прогноза</h3><p>Отсчёт модели: '+display(p.intercept)+'. Знак показывает направление вклада.</p>'+ranked.slice(0,4).map(driver).join('')+
       '<details style="margin-top:10px"><summary style="padding:6px 9px;font-size:12px">Все вклады</summary><div style="padding:0 9px 8px">'+ranked.map(driver).join('')+(Math.abs(p.clip)>1e-8?'<p>Ограничение диапазона: '+error(p.clip)+'</p>':'')+'</div></details><h3>Известные мероприятия</h3>'+events;
-  }else $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(selected.model)+'</div><div class="micro">Прогноз выпущен '+escape(dateLabel(selected.origin))+'</div><h3>Факт и ошибка</h3><p>Факт: <b>'+display(selected.fact)+'</b><br>Абсолютная ошибка: <b>'+error(Math.abs(selected.model-selected.fact))+'</b><br>Сезонный прогноз: '+display(selected.baseline)+'</p>';
-  $('quality').innerHTML='<p>'+escape(loc)+' выбрана по MAE на валидации. На тесте '+(saved>=0?'ошибка ниже на ':'ошибка выше на ')+error(Math.abs(saved))+' относительно сезонного прогноза. Метрики показаны по всем гостиницам.</p>'+
+  }else $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(selected.model)+'</div><div class="micro">Прогноз выпущен '+escape(dateLabel(selected.origin))+'</div><h3>Факт и ошибка</h3><p>Факт: <b>'+display(selected.fact)+'</b><br>Абсолютная ошибка: <b>'+error(Math.abs(selected.model-selected.fact))+'</b><br>Сезонная медиана: '+display(selected.baseline)+'</p>';
+  $('quality').innerHTML='<p>Выбранная по валидации модель: '+escape(loc)+'. На тесте '+(Math.abs(saved)<1e-8?'MAE совпала с сезонной медианой.':
+      'MAE '+(saved>0?'ниже на ':'выше на ')+error(Math.abs(saved))+' относительно сезонной медианы.')+' Метрики показаны по всем гостиницам.</p>'+
     grid(['Модель','MAE валидация, '+unit,'MAE тест, '+unit,'RMSE тест, '+unit],q.finalists.map(r=>[r.label,num(r.validation.mae,2),num(r.test.mae,2),num(r.test.rmse,2)]),i=>q.finalists[i].family===q.winner.family)+
     '<p>MAE по горизонту: 1–7 дней — '+error(q.by_horizon['1–7'].mae)+'; 8–14 дней — '+error(q.by_horizon['8–14'].mae)+'. MAE той же модели без признаков афиши: '+error(q.without_events.mae)+'.</p>';
+  const st=data.stress, models=q.finalists;
+  $('stress').innerHTML='<p>Синтетические факты с '+escape(st.start)+' по '+escape(st.end)+'. Модели обучены по '+
+    escape(st.frozen_through)+' и заморожены. Слабый эффект: '+num(100*st.spec.event_scale,0)+'% прежнего. В сценарии задержки перенесено '+
+    st.scenarios.find(s=>s.late).shifted+' из '+st.scenarios.find(s=>s.late).eligible+' ещё не опубликованных анонсов.</p>'+
+    grid(['Сценарий · MAE, '+unit,...models.map(r=>r.label)],st.scenarios.map(s=>[s.label,...models.map(r=>num(s.targets[t][r.family].mae,2))]))+
+    '<p>Меньше — лучше. Даты, случайный шум и границы прогноза одинаковы во всех сценариях.</p>';
   const imp=q.importance.slice(0,8);
   $('importance').innerHTML='<p>Вклад признаков рассчитан на отложенной истории. Перемешивание показывает изменение MAE, если нарушить связь отдельного признака с остальными наблюдениями. Коррелирующие признаки интерпретируются осторожно.</p>'+
     grid(['Признак','Средний |вклад|','Прирост MAE','|Вклад| 1-я половина','|Вклад| 2-я половина'],imp.map(r=>[r.name,...['native','permutation','early','late'].map(k=>error(r[k]))]))+
@@ -113,10 +150,12 @@ function paint(){
   current={h,t,all};
 }
 $('hotel').onchange=$('target').onchange=()=>{idx=0;paint();};
+$('eventMode').onchange=()=>paint();
+$('archiveDay').onchange=()=>paintArchive();
 $('future').onclick=$('test').onclick=e=>{view=e.currentTarget.id;idx=0;paint();};
 $('day').oninput=e=>{idx=Number(e.currentTarget.value);paint();};
 $('mainChart').onclick=e=>{if(e.target.dataset.i!=null){idx=Number(e.target.dataset.i);paint();}};
-$('download').onclick=()=>{const {h,t,all}=current;let csv='date;forecast;seasonal;actual\r\n';
+$('download').onclick=()=>{const {h,t,all}=current;let csv='date;forecast;seasonal_median;actual\r\n';
   csv+=all.map(r=>[r.date, (view==='future'?r[t].value:r.model).toFixed(2),(view==='future'?r[t].baseline:r.baseline).toFixed(2),r.fact?.toFixed(2)??''].join(';')).join('\r\n');
   const url=URL.createObjectURL(new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=h+'-'+t+'-'+view+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);};
 init();

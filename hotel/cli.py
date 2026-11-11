@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from .pipeline import replay, run
 from .sources import MSK
-from .storage import connect, ingest, ingest_public
+from .storage import connect, ingest, ingest_archive, ingest_public
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,11 +74,14 @@ def main(argv=None):
     ap.add_argument("--config", type=Path, default=ROOT/"config.json")
     ap.add_argument("--db", type=Path, default=ROOT/"build"/"hotel.sqlite")
     ap.add_argument("--out", type=Path, default=ROOT/"build")
+    ap.add_argument("--archive-file", type=Path, default=ROOT/"data"/"public_events.json")
     commands = ap.add_subparsers(dest="command", required=True)
     for name in ("build", "ingest", "demo"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--as-of", type=date.fromisoformat)
-        cmd.add_argument("--public", action="store_true", help="Запросить свежую афишу KudaGo")
+        mode = cmd.add_mutually_exclusive_group()
+        mode.add_argument("--public", action="store_true", help="Запросить свежую афишу KudaGo")
+        mode.add_argument("--archive", action="store_true", help="Показать прогноз с публичной афишей из архива")
         if name == "demo":
             cmd.add_argument("--port", type=int, default=8765)
     commands.add_parser("serve").add_argument("--port", type=int, default=8765)
@@ -93,6 +96,11 @@ def main(argv=None):
         ap.error("Для этого проекта горизонт 14 дней, периоды валидации и теста кратны 14 и не короче 28 дней.")
     if cfg["train_stride"] < 1 or cfg["request_retries"] < 1 or len({h["id"] for h in cfg["hotels"]}) != len(cfg["hotels"]):
         ap.error("Проверьте шаг обучения, число попыток и уникальность ID отелей.")
+    spec = cfg["stress"]
+    if not (spec["days"] >= 28 and spec["days"] % cfg["horizon"] == 0
+            and 0 <= spec["event_scale"] <= 1 and 0 <= spec["late_share"] <= 1
+            and 0 <= spec["notice_days"] < cfg["horizon"]):
+        ap.error("Проверьте длину и параметры стресс-периода.")
     a.db.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect(a.db, cfg)) as db:
         if a.command == "replay":
@@ -106,11 +114,16 @@ def main(argv=None):
         if end < anchor and a.command in ("build", "demo"):
             ap.error("Дата расчёта не может предшествовать опорной дате в config.json.")
         print(json.dumps(ingest(db, cfg, end), ensure_ascii=False))
+        archive_ready = ingest_archive(db, a.archive_file, end)
+        if not archive_ready:
+            print("Публичный архив не загружен; см. журнал.", file=sys.stderr)
+            if a.archive:
+                return 1
         public = a.public and ingest_public(db, cfg, today)
         if a.public and not public:
             print("KudaGo недоступен; используется автономная афиша. Подробности в журнале.", file=sys.stderr)
         if a.command != "ingest":
-            result = run(db, cfg, end, public)
+            result = run(db, cfg, end, public, a.archive and archive_ready)
             render(a.out, result)
             for t, row in result["targets"].items():
                 print(f"{t}: {row['winner']['family']}; test MAE={row['winner']['test']['mae']:.2f}; "

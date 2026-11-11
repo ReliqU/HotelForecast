@@ -1,9 +1,10 @@
 """Ridge and gradient boosting with decision stumps, implemented using NumPy."""
 import numpy as np
 
-GRID = {"seasonal": [{}], "ridge": [{"alpha": a} for a in (1., 20., 150.)],
+GRID = {"seasonal": [{}], "median": [{}], "ridge": [{"alpha": a} for a in (1., 20., 150.)],
         "boost": [{"trees": n, "rate": .14, "bins": 18} for n in (55, 120, 220)]}
-NAMES = {"seasonal": "Сезонный прогноз", "ridge": "Линейная регрессия Ridge", "boost": "Градиентный бустинг"}
+NAMES = {"seasonal": "Последний одноимённый день", "median": "Сезонная медиана",
+         "ridge": "Линейная регрессия Ridge", "boost": "Градиентный бустинг"}
 
 
 def bound(p, target):
@@ -84,7 +85,7 @@ class Boost:
 
 
 def fit(family, params, x, y, baseline_col):
-    model = Seasonal(baseline_col) if family == "seasonal" else (Ridge(**params) if family == "ridge" else Boost(**params))
+    model = Seasonal(baseline_col) if family in ("seasonal", "median") else (Ridge(**params) if family == "ridge" else Boost(**params))
     return model.fit(x, y)
 
 

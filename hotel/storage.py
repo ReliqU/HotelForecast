@@ -7,6 +7,7 @@ import math
 import sqlite3
 from datetime import date
 
+from .archive import ARCHIVE_SOURCE, parse_archive
 from .sources import DAY, days, fetch_events, html_feed, parse_html, parse_public, room_feed
 
 SCHEMA = """
@@ -26,6 +27,10 @@ CREATE TABLE IF NOT EXISTS events (
   PRIMARY KEY(source, id)
 );
 CREATE INDEX IF NOT EXISTS events_day ON events (source, day, published);
+CREATE TABLE IF NOT EXISTS event_provenance (
+  source TEXT, id TEXT, url TEXT NOT NULL, basis TEXT NOT NULL, archived_on TEXT NOT NULL,
+  PRIMARY KEY(source,id)
+);
 CREATE TABLE IF NOT EXISTS loads (
   id INTEGER PRIMARY KEY, run_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   source TEXT NOT NULL, through_day TEXT NOT NULL, status TEXT NOT NULL,
@@ -138,6 +143,30 @@ def ingest_public(db, cfg, today):
     except Exception as e:
         with db:
             log(db, source, today, "failed", 0, 0, 0, f"{type(e).__name__}: {e}")
+        return False
+
+
+def ingest_archive(db, path, end):
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+        snapshot, events = parse_archive(text)
+        with db:
+            r = db.execute("SELECT sha256 FROM raw WHERE source=? AND slice=?",
+                           (ARCHIVE_SOURCE, str(snapshot))).fetchone()
+            if r:
+                if r[0] != hashlib.sha256(text.encode()).hexdigest():
+                    raise ValueError("Архив на эту дату уже загружен с другим содержимым.")
+                log(db, ARCHIVE_SOURCE, end, "ok", 0, 0, 0, "cached archive")
+                return True
+            save_raw(db, ARCHIVE_SOURCE, snapshot, text)
+            save_events(db, ARCHIVE_SOURCE, events)
+            db.executemany("INSERT OR IGNORE INTO event_provenance VALUES (?,?,?,?,?)",
+                           [(ARCHIVE_SOURCE,e["id"],e["url"],e["basis"],str(snapshot)) for e in events])
+            log(db, ARCHIVE_SOURCE, end, "ok", 1, len(events), 0, f"snapshot {snapshot}")
+        return True
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+        with db:
+            log(db, ARCHIVE_SOURCE, end, "failed", 0, 0, 0, f"{type(e).__name__}: {e}")
         return False
 
 

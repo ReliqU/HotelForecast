@@ -52,7 +52,7 @@ def proximity(h, e):
     return math.exp(-km(h["lat"], h["lon"], e["lat"], e["lon"]) / 3.8)
 
 
-def room_feed(cfg, day):
+def room_feed(cfg, day, event_scale=1.):
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\n")
     w.writerow(("hotel", "day", "available", "sold", "revenue"))
@@ -61,7 +61,7 @@ def room_feed(cfg, day):
     for i, h in enumerate(cfg["hotels"]):
         r = rng(cfg["seed"], day, h["id"])
         drift = 0.022 * math.sin((day.toordinal() - 738520) / 22.0 + i)
-        demand = sum(proximity(h, e) * (1.2 if e["kind"] == "expo" else 1.) for e in events)
+        demand = event_scale * sum(proximity(h, e) * (1.2 if e["kind"] == "expo" else 1.) for e in events)
         weekly = (-.066, -.035, -.025, .01, .055, .11, .014)[day.weekday()]
         share = (.62 + .055 * math.sin(annual - .7) + weekly + .012 * i + drift
                  + .22 * min(1.5, demand) + r.gauss(0, .035))
