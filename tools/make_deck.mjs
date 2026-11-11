@@ -19,6 +19,7 @@ await fs.mkdir(output,{recursive:true});
 const data=JSON.parse(await fs.readFile(process.env.HOTEL_RESULTS||path.join(root,'build','results.json'),'utf8'));
 const f=(v,n=2)=>new Intl.NumberFormat('ru-RU',{minimumFractionDigits:n,maximumFractionDigits:n}).format(v);
 const occ=data.targets.occupancy, adr=data.targets.adr;
+const cf=data.confirmation, co=cf.targets.occupancy, ca=cf.targets.adr;
 const st=data.stress, weak=st.scenarios.find(s=>s.weak&&!s.late), delayed=st.scenarios.find(s=>s.late);
 const demoRow=data.forecasts.public_archive.center.find(r=>r.date==='2026-11-17');
 const P=Presentation.create({slideSize:{width:1280,height:720}});
@@ -105,34 +106,42 @@ function nativeTable(s,values,y,columns,emphasis=3){
   text(s,'Два сезонных ориентира  /  Ridge  /  Градиентный бустинг',77,525,1100,62,{size:28,bold:true,color:C.accent});
 }
 {
-  const s=slide(6,'Ridge опережает сезонную медиану','2:40–3:20. Новый ориентир уменьшил ошибку по сравнению с переносом одного дня. На том же отложенном наборе Ridge всё равно точнее. MAE по загрузке измеряется в процентных пунктах. Тест не использовался для подбора. Источник чисел: результат сборки v1.1.0.');
+  const s=slide(6,'Хьюбер снизил MAE на исходном тесте','2:40–3:20. Хьюбер меньше штрафует редкие крупные остатки. На прежней валидации и исходном тесте он снижает MAE по обеим целям. Но на диагностических датах 4 марта — 23 июня он уступил в среднем и выиграл только на первой неделе. Поэтому отдельно проверяем схему Хьюбер 1–7 и Ridge 8–14. Источник: результат сборки v1.2.0.');
   const v=[['Модель','Загрузка MAE','Загрузка RMSE','ADR MAE','ADR RMSE']];
-  for(let i=0;i<4;i++)v.push([['Один день недели','Сезонная медиана','Ridge','Бустинг'][i],
-    f(occ.finalists[i].test.mae)+' п. п.',f(occ.finalists[i].test.rmse)+' п. п.',
-    f(adr.finalists[i].test.mae)+' ₽',f(adr.finalists[i].test.rmse)+' ₽']);
+  for(const [family,label] of [['median','Сезонная медиана'],['ridge','Ridge'],['robust','Хьюбер'],['hybrid','Комбинация']]){
+    const [o,a]=[occ,adr].map(t=>t.finalists.find(r=>r.family===family).test);
+    v.push([label,f(o.mae)+' п. п.',f(o.rmse)+' п. п.',f(a.mae)+' ₽',f(a.rmse)+' ₽']);
+  }
   nativeTable(s,v,158,[248,222,228,210,212]);
-  const drop=t=>Math.round(100*(1-t.winner.test.mae/t.baseline.test.mae));
-  text(s,'–'+drop(occ)+'% MAE загрузки     /     –'+drop(adr)+'% MAE средней цены',76,484,1120,68,{size:38,bold:true,color:C.accent});
-  text(s,'Относительно сезонной медианы на отложенных синтетических данных.',76,566,1120,48,{size:24,color:C.muted});
+  text(s,'На новых датах преимущество Хьюбера осталось на днях 1–7.',76,484,1120,68,{size:32,bold:true,color:C.accent});
+  text(s,'Для итоговой проверки комбинации взят ещё один период.',76,566,1120,48,{size:24,color:C.muted});
 }
 {
-  const s=slide(7,'При слабом эффекте разрыв сужается','3:20–4:10. Это новый синтетический период, 12 ноября — 3 марта. Параметры зафиксированы до его начала. Поздние анонсы и ослабление эффекта рассматриваются отдельно и вместе. Событийный эффект снижен до 35%. Перенесены '+delayed.shifted+' из '+delayed.eligible+' ещё неизвестных анонсов. Таблица показывает MAE; результат зависит от заданных сценариев.');
-  const v=[['Сценарий','Ridge, п. п.','Медиана, п. п.','Ridge, ₽','Медиана, ₽']];
-  for(const r of st.scenarios)v.push([r.label,...['occupancy','adr'].flatMap(t=>['ridge','median'].map(m=>f(r.targets[t][m].mae)))]);
+  const s=slide(7,'Новая схема улучшила прогноз загрузки','3:20–4:05. Проверка на 12 непересекающихся окнах. Граница 7 дней зафиксирована после диагностического периода, до расчёта этой проверки. Правило замены: ниже MAE и RMSE не выше чем на 5 процентов. Для загрузки выигрыш в 10 из 12 окон, для ADR MAE не снизилась, поэтому оставляем Ridge. Результаты относятся к симуляции.');
+  nativeTable(s,[['Показатель','MAE Ridge','MAE схемы','Рабочая модель'],
+    ['Загрузка',f(co.previous.mae)+' п. п.',f(co.candidate.mae)+' п. п.','Хьюбер 1–7 / Ridge 8–14'],
+    ['ADR',f(ca.previous.mae)+' ₽',f(ca.candidate.mae)+' ₽','Ridge']],
+    182,[280,216,224,400],1);
+  text(s,'Точнее в '+co.windows_better+' из '+cf.origins+' окон по загрузке',76,414,1120,80,{size:44,bold:true,color:C.accent});
+  text(s,'Подтверждающий период: 24.06–08.12.2027, синтетические факты.',76,535,1120,49,{size:24,color:C.muted});
+}
+{
+  const s=slide(8,'Выигрыш зависит от сценария','4:05–4:45. Это отдельный синтетический стресс-период, 12 ноября — 3 марта. Параметры зафиксированы до его начала. Событийный эффект снижен до 35%. Перенесены '+delayed.shifted+' из '+delayed.eligible+' ещё неизвестных анонсов. Преимущество нового прогноза в обычном режиме не означает выигрыш при сдвиге спроса.');
+  const v=[['Сценарий','Ridge, п. п.','Схема, п. п.','Ridge, ₽','Схема, ₽']];
+  for(const r of st.scenarios)v.push([r.label,...['occupancy','adr'].flatMap(t=>['ridge','hybrid'].map(m=>f(r.targets[t][m].mae)))]);
   nativeTable(s,v,158,[350,188,200,181,201]);
-  const difference=f(weak.targets.occupancy.median.mae-weak.targets.occupancy.ridge.mae);
-  text(s,difference+' п. п. — разница по загрузке при слабом эффекте',76,486,1120,65,{size:34,bold:true,color:C.accent});
+  text(s,'При слабом эффекте MAE загрузки: '+f(weak.targets.occupancy.hybrid.mae)+' против '+f(weak.targets.occupancy.ridge.mae)+' п. п.',76,486,1120,65,{size:33,bold:true,color:C.accent});
   text(s,'MAE за 12.11.2026–03.03.2027. Модели заморожены до начала периода.',76,562,1120,49,{size:24,color:C.muted});
 }
 {
-  const s=slide(8,'Когда анонс становится доступным','4:10–4:45. В локальном архиве пять анонсов. Берём дату публикации использованной страницы или дату первого наблюдения для недатированной страницы. Прогноз формируется в конце дня по Москве. Источники: '+data.archive.events.map(e=>e.title+' — '+e.url).join('; ')+'.');
+  const s=slide(9,'Когда анонс становится доступным','4:45–5:15. В локальном архиве пять анонсов. Берём дату публикации использованной страницы или дату первого наблюдения для недатированной страницы. Прогноз формируется в конце дня по Москве. Источники: '+data.archive.events.map(e=>e.title+' — '+e.url).join('; ')+'.');
   labelled(s,'01','9 ноября','CleanExpo и БИОТ ещё отсутствуют\nв архиве на эту дату.',159);
   labelled(s,'02','10 ноября','Появляется датированная новость\nорганизатора CleanExpo.',267);
   labelled(s,'03','11 ноября','Фиксируем недатированную страницу\nБИОТ. Оба анонса доступны к выпуску.',375);
   text(s,'Дата проведения и дата доступности хранятся отдельно.',76,529,1120,55,{size:27,bold:true,color:C.accent});
 }
 {
-  const s=slide(9,'Демонстрация публичной афиши','4:45–5:45. Откройте demo/forecast.html. Выберите «Публичный архив» и 17 ноября. Покажите две ссылки с разными основаниями доступности. Раскройте список источников и переключите 9, 10 и 11 ноября. Затем вернитесь на «Проверку», раскройте стресс-таблицу и покажите сезонную медиану. Скриншот: локальная демонстрация.');
+  const s=slide(10,'Демонстрация публичной афиши','5:15–6:10. Откройте demo/forecast.html. Выберите «Публичный архив» и 17 ноября. Покажите две ссылки с разными основаниями доступности. Затем раскройте «Проверка новой схемы» и сравните загрузку с ADR. Скриншот: локальная демонстрация.');
   const png=await fs.readFile(path.join(root,'build','qa-archive.png'));
   s.images.add({blob:new Uint8Array(png),contentType:'image/png',fit:'contain',alt:'Дашборд с историей, прогнозом и вкладом признаков',
     position:{left:76,top:148,width:745,height:477}});
@@ -141,9 +150,9 @@ function nativeTable(s,values,y,columns,emphasis=3){
   text(s,'Ссылки на организаторов\n\nДата доступности\n\nВклады признаков',867,399,331,179,{size:22,color:C.muted});
 }
 {
-  const s=slide(10,'Что показал прототип','5:45–6:10. Итог: Ridge точнее на отложенной синтетике, но преимущество зависит от качества афиши и связи мероприятий со спросом. Публичная афиша подключается без сети, это проверка прохождения данных. О точности на реальных гостиницах можно судить после новой валидации.',true);
-  text(s,'Сезонная медиана даёт сильную точку сравнения',76,165,1120,84,{size:35,bold:true,color:C.white});
-  text(s,'Стресс-тест показывает границу преимущества Ridge',76,272,1120,84,{size:35,bold:true,color:C.white});
+  const s=slide(11,'Что показал прототип','6:10–6:30. Итог: для загрузки внедрена комбинация Хьюбера и Ridge, для цены сохранена Ridge. Поздние анонсы ограничивают точность дальнего прогноза. Для оценки на рынке нужны фактические данные гостиниц.',true);
+  text(s,'Для загрузки выиграла комбинация двух моделей',76,165,1120,84,{size:35,bold:true,color:C.white});
+  text(s,'Для средней цены оставлена Ridge',76,272,1120,84,{size:35,bold:true,color:C.white});
   text(s,'Публичная афиша работает из локального архива',76,378,1120,84,{size:35,bold:true,color:C.white});
   text(s,'Следующий шаг: валидация на фактах реальной гостиницы.',76,530,1120,58,{size:26,color:C.light});
 }
@@ -158,12 +167,12 @@ if(!process.argv.includes('--reuse-draft')){
 }
 const out=path.join(output,'Презентация.pptx');
 const result=await finalizePresentation({
-  workspaceDir:root,candidatePath:draft,finalPath:out,explicitTotalSlideCount:10,
+  workspaceDir:root,candidatePath:draft,finalPath:out,explicitTotalSlideCount:11,
   pythonExecutable:path.join(rt,'python','python.exe'),
   integrityValidatorPath:path.join(skill,'container_tools','inspect_presentation_package_integrity.py'),
   layoutValidatorPath:path.join(skill,'container_tools','inspect_presentation_layout_geometry.py'),
-  layoutArgs:['--expected-slide-size-emu','12192000,6858000','--validate-bullet-geometry','--validate-heading-fit','--require-native-table-slide','6','--require-native-table-slide','7'],
-  requiredNativeTableOwnerSlides:[6,7],fontPolicy:{basis:'design',families:[FONT]},
+  layoutArgs:['--expected-slide-size-emu','12192000,6858000','--validate-bullet-geometry','--validate-heading-fit','--require-native-table-slide','6','--require-native-table-slide','7','--require-native-table-slide','8'],
+  requiredNativeTableOwnerSlides:[6,7,8],fontPolicy:{basis:'design',families:[FONT]},
   verifyArtifactToolImport:true,receiptPath:path.join(qa,'validation.json'),
 });
 console.log(JSON.stringify(result));

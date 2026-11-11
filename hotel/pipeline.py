@@ -6,13 +6,14 @@ import json
 import numpy as np
 
 from .archive import ARCHIVE_SOURCE
+from .audit import audit_datasets, diagnostics, promote
 from .features import FeatureStore, LABELS, SEASONAL_LAST, SEASONAL_MEDIAN, TARGETS, UNITS
-from .models import GRID, NAMES, bound, fit, predict, scores
+from .models import GRID, NAMES, Hybrid, bound, fit, predict, scores
 from .sources import DAY, days
 from .storage import fingerprint, journal
 from .stress import scenario_sets
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 def split(cfg, anchor):
@@ -109,6 +110,7 @@ def run(db, cfg, as_of, public=False, archive=False):
     frozen_origins = list(days(fs.start + 35*DAY, anchor-h*DAY))[::cfg["train_stride"]]
     frozen = latest if as_of == anchor else fs.dataset(frozen_origins,h,anchor)
     stress_sets, stress_meta = scenario_sets(db,cfg,anchor)
+    (audit, notices, audit_meta),(confirmation, confirm_notices, confirm_meta) = audit_datasets(db,cfg,anchor)
     archive_rows = db.execute("SELECT slice,sha256 FROM raw WHERE source=? ORDER BY slice DESC LIMIT 1",
                               (ARCHIVE_SOURCE,)).fetchone()
     modes = ["event_html"] + ([ARCHIVE_SOURCE] if archive_rows else []) + (["kudago_json"] if public else [])
@@ -118,7 +120,8 @@ def run(db, cfg, as_of, public=False, archive=False):
     forecast_dates = list(days(as_of + DAY, as_of + h*DAY))
     output = dict(as_of=str(as_of), horizon=h, event_source=source, data_hash=digest, version=VERSION,
                   hotels=list(fs.hotels.values()), features=fs.names, targets={}, history={},
-                  forecasts={mode:{} for mode in modes}, stress=stress_meta,
+                  forecasts={mode:{} for mode in modes}, stress=stress_meta, audit=audit_meta,
+                  confirmation=confirm_meta,
                   backtest={}, journal=journal(db),
                   splits=dict(start=cfg["start"], train_end=str(ends[0]), validation_end=str(ends[1]),
                               test_end=str(ends[2]), test_origins=len(set(m[0] for m in sets[2][3]))),
@@ -153,21 +156,61 @@ def run(db, cfg, as_of, public=False, archive=False):
         candidates = []
         for family, params_grid in GRID.items():
             for params in params_grid:
-                model = fit(family, params, x, y, columns(fs,i,family))
+                model = fit(family, params, x, y, columns(fs,i,family),fs.event_start)
                 validation = scores(vy, predict(model, vx, target))
                 candidates.append(experiment(db, cfg, anchor, digest, i, family, params, validation))
         key = lambda r: (r["validation"]["mae"], r["validation"]["rmse"])
-        winner = min(candidates, key=key)
-        final_rows, predictions = [], {}
+        final_rows, predictions, final_models, frozen_models = [], {}, {}, {}
+        sx, sy, _ = subset(frozen,i)
+        ax, ay, am = subset(audit,i)
+        audit_predictions = {}
         for family in GRID:
             r = min((q for q in candidates if q["family"] == family), key=key).copy()
-            m = fit(family, r["params"], rx, ry, columns(fs,i,family))
+            col = columns(fs,i,family)
+            m = fit(family, r["params"], rx, ry, col, fs.event_start)
             pp = predict(m, tx, target)
             r["test"] = scores(ty, pp)
             final_rows.append(r)
-            predictions[family] = pp
-            if family == winner["family"]:
-                test_model = m
+            predictions[family], final_models[family] = pp, m
+            trained = fit(family,r["params"],sx,sy,col,fs.event_start)
+            frozen_models[family] = trained
+            if family in ("ridge","robust"):
+                audit_predictions[family] = predict(trained,ax,target)
+            for scenario, info in stress_sets.values():
+                qx,qy,_ = subset(scenario,i)
+                prediction = predict(trained,qx,target)
+                info["targets"].setdefault(target,{})[family] = dict(
+                    scores(qy,prediction), bias=float((prediction-qy).mean()))
+        output["audit"]["targets"][target] = diagnostics(
+            ay,audit_predictions["robust"],audit_predictions["ridge"],am,notices)
+
+        # Each component is the finalist of its own family on the old validation.
+        # The cutoff is fixed before opening the later confirmation period.
+        original = next(r for r in final_rows if r["family"] == "ridge")
+        robust = next(r for r in final_rows if r["family"] == "robust")
+        params = dict(short=robust["params"],long=original["params"],split=7)
+        mv = fit("hybrid",params,x,y,medcol,fs.event_start)
+        row = experiment(db,cfg,anchor,digest,i,"hybrid",params,scores(vy,predict(mv,vx,target)))
+        candidates.append(row)
+        model = Hybrid(final_models["robust"],final_models["ridge"])
+        final_models["hybrid"] = model
+        predictions["hybrid"] = predict(model,tx,target)
+        combined = dict(row,test=scores(ty,predictions["hybrid"]))
+        final_rows.append(combined)
+        combo = Hybrid(frozen_models["robust"],frozen_models["ridge"])
+        frozen_models["hybrid"] = combo
+        for scenario, info in stress_sets.values():
+            qx,qy,_ = subset(scenario,i)
+            p = predict(combo,qx,target)
+            info["targets"][target]["hybrid"] = dict(scores(qy,p),bias=float((p-qy).mean()))
+        cx,cy,cm = subset(confirmation,i)
+        check = diagnostics(cy,predict(combo,cx,target),predict(frozen_models["ridge"],cx,target),cm,confirm_notices)
+        check["promoted"] = promote(check)
+        winner = combined if check["promoted"] else original
+        check["released_family"] = winner["family"]
+        output["confirmation"]["targets"][target] = check
+        validation_winner = min(candidates, key=key)
+        test_model = final_models[winner["family"]]
         pp = predictions[winner["family"]]
         chosen = next(r for r in final_rows if r["id"] == winner["id"])
         base = next(r for r in final_rows if r["family"] == "median")
@@ -176,27 +219,20 @@ def run(db, cfg, as_of, public=False, archive=False):
         importance_rows, pdp = importance(test_model, tx, ty, fs, target, cfg["seed"], tm)
         # Same selected family and parameters; drop the event block, refit, compare.
         ablation = fit(winner["family"], winner["params"], rx[:, :fs.event_start], ry,
-                       columns(fs,i,winner["family"]))
+                       columns(fs,i,winner["family"]),fs.event_start)
         without = scores(ty, predict(ablation, tx[:, :fs.event_start], target))
         output["targets"][target] = dict(label=LABELS[target], unit=UNITS[target], winner=chosen,
             baseline=base, candidates=candidates, finalists=final_rows, by_horizon=segmented,
+            validation_winner=validation_winner,
             importance=importance_rows, pdp=pdp, without_events=without,
             samples=dict(train=len(y), validation=len(vy), test=len(ty)))
         for hotel in fs.hotels:
             output["backtest"][hotel][target] = [
                 dict(date=str(d), origin=str(o), fact=float(a), model=float(b), baseline=float(c))
                 for (o, hh, d), a, b, c in zip(tm, ty, pp, predictions["median"]) if hh == hotel]
-        sx, sy, _ = subset(frozen,i)
-        for r in final_rows:
-            f = r["family"]
-            trained = fit(f,r["params"],sx,sy,columns(fs,i,f))
-            for scenario, info in stress_sets.values():
-                qx,qy,_ = subset(scenario,i)
-                prediction = predict(trained,qx,target)
-                info["targets"].setdefault(target,{})[f] = dict(
-                    scores(qy,prediction), bias=float((prediction-qy).mean()))
         lx, ly, _ = subset(latest, i)
-        model = fit(winner["family"], winner["params"], lx, ly, columns(fs,i,winner["family"]))
+        model = frozen_models[winner["family"]] if as_of == anchor else fit(
+            winner["family"],winner["params"],lx,ly,columns(fs,i,winner["family"]),fs.event_start)
         for mode in modes:
             for hotel in fs.hotels:
                 fx = np.asarray([fs.row(hotel,as_of,d,mode)[0] for d in forecast_dates])
@@ -227,7 +263,7 @@ def replay(db, eid):
     t, i = r["target"], TARGETS.index(r["target"])
     x, y, _ = subset(fs.dataset(origins[0], cfg["horizon"], ends[0]), i)
     vx, vy, _ = subset(fs.dataset(origins[1], cfg["horizon"], ends[1]), i)
-    m = fit(r["family"], params, x, y, columns(fs,i,r["family"]))
+    m = fit(r["family"], params, x, y, columns(fs,i,r["family"]),fs.event_start)
     actual, expected = scores(vy, predict(m, vx, t)), json.loads(r["metrics"])
     ok = all(abs(actual[k]-expected[k]) < 1e-7 for k in actual)
     return dict(id=eid, validation=actual, expected=expected, reproduced=ok)

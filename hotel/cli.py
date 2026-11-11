@@ -101,6 +101,8 @@ def main(argv=None):
             and 0 <= spec["event_scale"] <= 1 and 0 <= spec["late_share"] <= 1
             and 0 <= spec["notice_days"] < cfg["horizon"]):
         ap.error("Проверьте длину и параметры стресс-периода.")
+    if not all(cfg[n] >= 28 and cfg[n] % cfg["horizon"] == 0 for n in ("audit_days","confirmation_days")):
+        ap.error("Длины диагностического и подтверждающего периодов должны быть кратны горизонту и не короче 28 дней.")
     a.db.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect(a.db, cfg)) as db:
         if a.command == "replay":

@@ -35,6 +35,7 @@ svg{width:100%;height:auto;display:block;overflow:visible}svg text{font:12px "Se
 </div>
 <section class="sections">
 <details open><summary>Насколько точен прогноз</summary><div class="inside" id="quality"></div></details>
+<details id="confirmPanel"><summary>Проверка новой схемы</summary><div class="inside" id="confirmation"></div></details>
 <details id="stressPanel"><summary>Стресс-тест на новом периоде</summary><div class="inside" id="stress"></div></details>
 <details id="archivePanel"><summary>Источники публичного архива</summary><div class="inside">
   <p id="archiveNote"></p><label>Что было известно на дату <input type="date" id="archiveDay"></label>
@@ -120,18 +121,29 @@ function paint(){
   const loc=q.winner.label;
   if(view==='future'){
     const p=selected[t], ranked=data.features.map((name,i)=>[name,p.contributions[i]]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+    const active=q.winner.family==='hybrid'?(idx<q.winner.params.split?'Регрессия Хьюбера':'Линейная регрессия Ridge')+' · день '+(idx+1):loc;
     const vmax=Math.max(...ranked.map(v=>Math.abs(v[1])),.001);
     const driver=([name,v])=>'<div class="driver"><span>'+escape(name)+'</span><span class="track"><i style="width:'+100*Math.abs(v)/vmax+'%"></i></span><em>'+sign(v,d)+' '+unit+'</em></div>';
     const events=selected.events.length?'<ul>'+selected.events.map(e=>'<li>'+eventLink(e)+(e.venue?' · '+escape(e.venue):'')+
       (e.basis?'<br><span class="micro">'+basis(e)+' '+escape(e.available_from)+'</span>':'')+'</li>').join('')+'</ul>':
       '<p>В выбранной афише на эту дату нет доступных записей.</p>';
-    $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(p.value)+'</div><div class="micro">'+escape(loc)+'</div><h3>Главные факторы прогноза</h3><p>Отсчёт модели: '+display(p.intercept)+'. Знак показывает направление вклада.</p>'+ranked.slice(0,4).map(driver).join('')+
+    $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(p.value)+'</div><div class="micro">'+escape(active)+'</div><h3>Главные факторы прогноза</h3><p>Отсчёт модели: '+display(p.intercept)+'. Знак показывает направление вклада.</p>'+ranked.slice(0,4).map(driver).join('')+
       '<details style="margin-top:10px"><summary style="padding:6px 9px;font-size:12px">Все вклады</summary><div style="padding:0 9px 8px">'+ranked.map(driver).join('')+(Math.abs(p.clip)>1e-8?'<p>Ограничение диапазона: '+error(p.clip)+'</p>':'')+'</div></details><h3>Известные мероприятия</h3>'+events;
   }else $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(selected.model)+'</div><div class="micro">Прогноз выпущен '+escape(dateLabel(selected.origin))+'</div><h3>Факт и ошибка</h3><p>Факт: <b>'+display(selected.fact)+'</b><br>Абсолютная ошибка: <b>'+error(Math.abs(selected.model-selected.fact))+'</b><br>Сезонная медиана: '+display(selected.baseline)+'</p>';
-  $('quality').innerHTML='<p>Выбранная по валидации модель: '+escape(loc)+'. На тесте '+(Math.abs(saved)<1e-8?'MAE совпала с сезонной медианой.':
+  $('quality').innerHTML='<p>Модель в рабочем прогнозе: '+escape(loc)+'. На исходном тесте '+(Math.abs(saved)<1e-8?'MAE совпала с сезонной медианой.':
       'MAE '+(saved>0?'ниже на ':'выше на ')+error(Math.abs(saved))+' относительно сезонной медианы.')+' Метрики показаны по всем гостиницам.</p>'+
     grid(['Модель','MAE валидация, '+unit,'MAE тест, '+unit,'RMSE тест, '+unit],q.finalists.map(r=>[r.label,num(r.validation.mae,2),num(r.test.mae,2),num(r.test.rmse,2)]),i=>q.finalists[i].family===q.winner.family)+
     '<p>MAE по горизонту: 1–7 дней — '+error(q.by_horizon['1–7'].mae)+'; 8–14 дней — '+error(q.by_horizon['8–14'].mae)+'. MAE той же модели без признаков афиши: '+error(q.without_events.mae)+'.</p>';
+  const conf=data.confirmation, cmp=conf.targets[t], summary={previous:cmp.previous,candidate:cmp.candidate};
+  const metricsRow=(label, r)=>[label,num(r.previous.mae,2),num(r.candidate.mae,2),num(r.previous.rmse,2),num(r.candidate.rmse,2),r.candidate.n];
+  $('confirmation').innerHTML='<p>Синтетический период '+escape(conf.start)+' — '+escape(conf.end)+
+    '. Хьюбер используется на днях 1–7, Ridge на днях 8–14. Все параметры зафиксированы до проверочного периода.</p>'+
+    grid(['Срез','MAE Ridge, '+unit,'MAE схемы, '+unit,'RMSE Ridge, '+unit,'RMSE схемы, '+unit,'Прогнозы'],[
+      metricsRow('Все прогнозы',summary),...Object.entries(cmp.by_horizon).map(([k,r])=>metricsRow('Дни '+k,r)),
+      ...data.hotels.map(h=>metricsRow(h.name,cmp.by_hotel[h.id]))],i=>i===0)+
+    '<p>'+ (cmp.promoted?'Комбинация прошла проверку и используется для этого показателя.':
+      'Для этого показателя оставлена Ridge: '+(cmp.candidate.mae>=cmp.previous.mae?'средняя абсолютная ошибка комбинации не снизилась.':'RMSE выросла более чем на 5%.'))+
+    ' Схема точнее в '+cmp.windows_better+' из '+conf.origins+' окон. Результаты относятся к симуляции.</p>';
   const st=data.stress, models=q.finalists;
   $('stress').innerHTML='<p>Синтетические факты с '+escape(st.start)+' по '+escape(st.end)+'. Модели обучены по '+
     escape(st.frozen_through)+' и заморожены. Слабый эффект: '+num(100*st.spec.event_scale,0)+'% прежнего. В сценарии задержки перенесено '+

@@ -1,10 +1,17 @@
-"""Ridge and gradient boosting with decision stumps, implemented using NumPy."""
+"""Regularized linear models and gradient boosting, implemented using NumPy."""
 import numpy as np
 
 GRID = {"seasonal": [{}], "median": [{}], "ridge": [{"alpha": a} for a in (1., 20., 150.)],
-        "boost": [{"trees": n, "rate": .14, "bins": 18} for n in (55, 120, 220)]}
+        "boost": [{"trees": n, "rate": .14, "bins": 18} for n in (55, 120, 220)],
+        "robust": [
+            {"alpha": 20., "cut": .6, "expanded": False},
+            {"alpha": 75., "cut": 1.2, "expanded": False},
+            {"alpha": 35., "cut": .6, "expanded": True},
+            {"alpha": 100., "cut": 1.2, "expanded": True},
+        ]}
 NAMES = {"seasonal": "Последний одноимённый день", "median": "Сезонная медиана",
-         "ridge": "Линейная регрессия Ridge", "boost": "Градиентный бустинг"}
+         "ridge": "Линейная регрессия Ridge", "boost": "Градиентный бустинг",
+         "robust": "Регрессия Хьюбера", "hybrid": "Хьюбер 1–7 / Ridge 8–14"}
 
 
 def bound(p, target):
@@ -39,6 +46,80 @@ class Ridge:
 
     def contrib(self, x):
         return (x-self.mean)/self.scale*self.beta
+
+
+class Robust:
+    """L2-regularized Huber regression with an optional small nonlinear basis."""
+    def __init__(self, alpha, cut, expanded, event_start):
+        self.alpha, self.cut, self.expanded = alpha, cut, expanded
+        self.event_start = event_start
+
+    def basis(self, x):
+        width = x.shape[1]
+        if not self.expanded:
+            return x, [(i,) for i in range(width)]
+        lead, sine, cosine = x[:, 0], x[:, 1], x[:, 2]
+        extra = [2*sine*cosine, cosine*cosine-sine*sine]
+        owners = [(1,2), (1,2)]
+        if self.event_start is not None and width == self.event_start + 5:
+            j = self.event_start+4
+            near = x[:, j]
+            extra.extend([near*near, near*lead, *(near*x[:, k] for k in range(j-4,j))])
+            owners.extend([(j,), (j,0), *((j,k) for k in range(j-4,j))])
+        return np.column_stack((x,*extra)), [(i,) for i in range(width)]+owners
+
+    def fit(self, x, y):
+        z, self.owners = self.basis(x)
+        self.mean, self.scale = z.mean(axis=0), z.std(axis=0)
+        self.scale[self.scale < 1e-9] = 1.
+        design = np.column_stack((np.ones(len(z)), (z-self.mean)/self.scale))
+        penalty = self.alpha*np.eye(design.shape[1])
+        penalty[0,0] = 0.  # Do not shrink the intercept.
+        def solve(weights):
+            weighted = design.T*weights
+            return np.linalg.solve(weighted@design+penalty,weighted@y)
+        coef = solve(np.ones(len(y)))
+        residual = y-design@coef
+        mad = np.median(np.abs(residual-np.median(residual)))
+        self.delta = max(self.cut*1.4826*mad, 1e-6)
+        for _ in range(25):
+            residual = np.abs(y-design@coef)
+            new = solve(np.minimum(1.,self.delta/np.maximum(residual,1e-12)))
+            if np.max(np.abs(new-coef)) <= 1e-7*max(1.,np.max(np.abs(coef))):
+                coef = new
+                break
+            coef = new
+        self.intercept, self.beta = float(coef[0]), coef[1:]
+        return self
+
+    def contrib(self, x):
+        z, _ = self.basis(x)
+        part = (z-self.mean)/self.scale*self.beta
+        if not self.expanded:
+            return part
+        c = part[:,:x.shape[1]].copy()
+        for j, owners in enumerate(self.owners[x.shape[1]:], x.shape[1]):
+            for k in owners:
+                c[:, k] += part[:, j]/len(owners)
+        return c
+
+
+class Hybrid:
+    """Use Huber for the first week and the original Ridge for the second."""
+    def __init__(self, short, long, split=7):
+        self.short, self.long, self.split = short,long,split
+        self.intercept = short.intercept
+
+    def contrib(self, x):
+        c = np.zeros_like(x)
+        short = x[:,0]<=self.split
+        if short.any():
+            c[short] = self.short.contrib(x[short])
+        if (~short).any():
+            c[~short] = self.long.contrib(x[~short])
+            # Attribute the change of model intercept to the lead-time switch.
+            c[~short,0] += self.long.intercept-self.short.intercept
+        return c
 
 
 class Boost:
@@ -84,8 +165,20 @@ class Boost:
         return c
 
 
-def fit(family, params, x, y, baseline_col):
-    model = Seasonal(baseline_col) if family in ("seasonal", "median") else (Ridge(**params) if family == "ridge" else Boost(**params))
+def fit(family, params, x, y, baseline_col, event_start=None):
+    if family == "hybrid":
+        return Hybrid(fit("robust",params["short"],x,y,baseline_col,event_start),
+                      fit("ridge",params["long"],x,y,baseline_col,event_start),params["split"])
+    if family in ("seasonal", "median"):
+        model = Seasonal(baseline_col)
+    elif family == "ridge":
+        model = Ridge(**params)
+    elif family == "robust":
+        model = Robust(event_start=event_start, **params)
+    elif family == "boost":
+        model = Boost(**params)
+    else:
+        raise ValueError(f"Unknown model: {family}")
     return model.fit(x, y)
 
 

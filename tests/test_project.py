@@ -9,9 +9,11 @@ from unittest.mock import patch
 import numpy as np
 
 from hotel.archive import ARCHIVE_SOURCE, parse_archive
+from hotel.audit import audit_datasets, promote
 from hotel.cli import ROOT, render
 from hotel.features import FeatureStore
 from hotel.pipeline import replay, run, split
+from hotel.models import Hybrid, Ridge, Robust, predict
 from hotel.sources import DAY, html_feed, parse_html, parse_public, room_feed
 from hotel.storage import connect, fingerprint, ingest, ingest_archive, ingest_public, normalize_rooms
 from hotel.stress import scenario_sets
@@ -67,6 +69,31 @@ class Inputs(unittest.TestCase):
         self.assertLessEqual(refit[-1]+14*DAY, val_end)
         self.assertGreater(val[0]+DAY, fit_end)
         self.assertGreater(test[0]+DAY, val_end)
+
+    def test_huber_limits_single_outlier_influence(self):
+        x=np.linspace(-1.,1.,81)[:,None]
+        clean=20+4*x[:,0]+.08*np.sin(np.arange(len(x)))
+        damaged=clean.copy()
+        damaged[-1]+=100
+        ridge=Ridge(.1).fit(x,damaged)
+        huber=Robust(.1,1.2,False,None).fit(x,damaged)
+        self.assertLess(np.mean(abs(predict(huber,x,"adr")-clean)),
+                        np.mean(abs(predict(ridge,x,"adr")-clean))*.3)
+
+    def test_hybrid_selects_component_at_exact_cutoff(self):
+        x=np.array([[i, float(i%4), float(i%5)] for i in range(1,15)],dtype=float)
+        short=Robust(1.,1.2,True,None).fit(x,30+.2*x[:,0]+x[:,1])
+        long=Ridge(1.).fit(x,50+.5*x[:,0]+x[:,2])
+        m=Hybrid(short,long)
+        joined=np.r_[predict(short,x[:7],"adr"),predict(long,x[7:],"adr")]
+        np.testing.assert_allclose(predict(m,x,"adr"),joined,rtol=0,atol=1e-10)
+        self.assertEqual(m.contrib(x).shape,x.shape)
+
+    def test_promotion_requires_mae_gain_and_rmse_guard(self):
+        comparison=lambda mae,rmse:dict(previous=dict(mae=4.,rmse=5.),candidate=dict(mae=mae,rmse=rmse))
+        self.assertTrue(promote(comparison(3.9,5.1)))
+        self.assertFalse(promote(comparison(4.,4.8)))
+        self.assertFalse(promote(comparison(3.9,5.26)))
 
 
 class Integration(unittest.TestCase):
@@ -190,13 +217,25 @@ class Integration(unittest.TestCase):
                     self.assertAlmostEqual(p["intercept"]+sum(p["contributions"])+p["clip"], p["value"], places=8)
 
     def test_model_selection_and_replay(self):
-        for t in self.data["targets"].values():
-            self.assertEqual({r["family"] for r in t["finalists"]}, {"seasonal","median","ridge","boost"})
+        for key,t in self.data["targets"].items():
+            self.assertEqual({r["family"] for r in t["finalists"]}, {"seasonal","median","ridge","boost","robust","hybrid"})
             self.assertEqual(t["baseline"]["family"],"median")
-            self.assertEqual(t["winner"]["id"], min(t["candidates"], key=lambda r: r["validation"]["mae"])["id"])
+            self.assertEqual(t["validation_winner"]["id"], min(t["candidates"], key=lambda r: r["validation"]["mae"])["id"])
+            confirm=self.data["confirmation"]["targets"][key]
+            self.assertEqual(t["winner"]["family"],"hybrid" if promote(confirm) else "ridge")
             self.assertTrue(replay(self.db, t["winner"]["id"])["reproduced"])
             self.assertGreater(t["samples"]["test"], 300)
 
+    def test_confirmation_starts_after_audit_and_keeps_facts_isolated(self):
+        before=self.db.execute("SELECT MAX(day) FROM rooms").fetchone()[0]
+        (explore,_,a),(confirm,_,b)=audit_datasets(self.db,CFG,ANCHOR)
+        self.assertEqual(b["start"],str(date.fromisoformat(a["end"])+DAY))
+        self.assertEqual(a["start"],str(date.fromisoformat(self.data["stress"]["end"])+DAY))
+        self.assertTrue(all(d>date.fromisoformat(a["end"]) for _,_,d in confirm[3]))
+        self.assertLess(max(d for _,_,d in explore[3]),min(d for _,_,d in confirm[3]))
+        self.assertEqual(self.db.execute("SELECT MAX(day) FROM rooms").fetchone()[0],before)
+        for r in self.data["confirmation"]["targets"].values():
+            self.assertEqual(r["by_horizon"]["8–14"]["previous"],r["by_horizon"]["8–14"]["candidate"])
     def test_portable_dashboard_embeds_results(self):
         with TemporaryDirectory() as tmp:
             p = Path(tmp)
