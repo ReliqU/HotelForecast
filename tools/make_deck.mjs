@@ -21,7 +21,7 @@ const {
     finalizePresentation
 } = await import(pathToFileURL(path.join(skill, 'container_tools', 'artifact_tool_utils.mjs')).href);
 const qa = path.resolve(process.env.HOTEL_SLIDES_QA || path.join(root, 'build', 'slides-qa'));
-const output = path.resolve(process.env.HOTEL_ARTIFACT_OUT || path.join(root, 'deliverables'));
+const output = path.resolve(process.env.HOTEL_ARTIFACT_OUT || path.join(root, '..', 'Материалы ' + path.basename(root)));
 await fs.mkdir(qa, {
     recursive: true
 });

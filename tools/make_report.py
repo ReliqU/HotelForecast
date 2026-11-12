@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 data = json.loads(
     Path(os.getenv("HOTEL_RESULTS", ROOT / "demo" / "results.json")).read_text(encoding="utf-8")
 )
-OUT = Path(os.getenv("HOTEL_ARTIFACT_OUT", ROOT / "deliverables"))
+OUT = Path(os.getenv("HOTEL_ARTIFACT_OUT", ROOT.parent / f"Материалы {ROOT.name}"))
 OUT.mkdir(exist_ok=True)
 doc = Document()
 sec = doc.sections[0]
@@ -739,7 +739,7 @@ p(
     "фильтр дат доступности, отложенный ряд, мобильная компоновка и выгрузка CSV."
 )
 p(
-    "В терминале PyCharm из папки проекта выполните .\\run-dashboard.cmd. Он откроет http://127.0.0.1:8765/. "
+    "В PowerShell из папки проекта выполните .\\run-dashboard.cmd. Он откроет http://127.0.0.1:8765/. "
     "Для запуска без сети используйте .\\run-dashboard.cmd --archive. Автономный demo/forecast.html открывается без Python. "
     "Команда python -m tools.validate_real_adr воспроизводит внешнюю проверку."
 )

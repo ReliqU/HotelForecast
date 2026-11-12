@@ -3,6 +3,7 @@ __pycache__/
 .idea/
 ~$*
 build/
+deliverables/
 *.sqlite*
 *.zip
 reports/_qa/
