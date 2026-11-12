@@ -1,4 +1,5 @@
 """SQLite raw layer, validated facts and incremental loading journal."""
+
 import csv
 import hashlib
 import io
@@ -8,7 +9,15 @@ import sqlite3
 from datetime import date
 
 from .archive import ARCHIVE_SOURCE, parse_archive
-from .sources import DAY, days, fetch_events, html_feed, parse_html, parse_public, room_feed
+from .sources import (
+    DAY,
+    days,
+    fetch_events,
+    html_feed,
+    parse_html,
+    parse_public,
+    room_feed,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -64,7 +73,12 @@ def normalize_rooms(payload, day, hotels):
     for r in csv.DictReader(io.StringIO(payload)):
         try:
             h, available, sold = r["hotel"], int(r["available"]), int(r["sold"])
-            if h not in hotels or h in seen or r["day"] != str(day) or not 0 < available <= hotels[h]:
+            if (
+                h not in hotels
+                or h in seen
+                or r["day"] != str(day)
+                or not 0 < available <= hotels[h]
+            ):
                 raise ValueError("invalid identity or capacity")
             seen.add(h)
             rev = float(r["revenue"]) if r["revenue"] else None
@@ -81,26 +95,47 @@ def normalize_rooms(payload, day, hotels):
 
 
 def save_events(db, source, events):
-    db.executemany("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?,?)", [
-        (source, e["id"], str(e["date"]), str(e["published"]), e["title"], e["venue"],
-         e["kind"], e["lat"], e["lon"]) for e in events
-    ])
+    db.executemany(
+        "INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                source,
+                e["id"],
+                str(e["date"]),
+                str(e["published"]),
+                e["title"],
+                e["venue"],
+                e["kind"],
+                e["lat"],
+                e["lon"],
+            )
+            for e in events
+        ],
+    )
 
 
 def save_raw(db, source, d, text):
-    db.execute("INSERT INTO raw VALUES (?,?,?,?)",
-               (source, str(d), hashlib.sha256(text.encode()).hexdigest(), text))
+    db.execute(
+        "INSERT INTO raw VALUES (?,?,?,?)",
+        (source, str(d), hashlib.sha256(text.encode()).hexdigest(), text),
+    )
 
 
 def log(db, source, end, status, slices, rows, flagged, detail=None):
-    db.execute("INSERT INTO loads(source,through_day,status,added_slices,rows,flagged,detail) "
-               "VALUES(?,?,?,?,?,?,?)", (source, str(end), status, slices, rows, flagged, detail))
+    db.execute(
+        "INSERT INTO loads(source,through_day,status,added_slices,rows,flagged,detail) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (source, str(end), status, slices, rows, flagged, detail),
+    )
 
 
 def ingest(db, cfg, end):
     start = date.fromisoformat(cfg["start"])
     hotels = {h["id"]: h["rooms"] for h in cfg["hotels"]}
-    for source, begin, generator in (("pms_csv", start, room_feed), ("event_html", start - 34*DAY, html_feed)):
+    for source, begin, generator in (
+        ("pms_csv", start, room_feed),
+        ("event_html", start - 34 * DAY, html_feed),
+    ):
         slices = rows = flagged = 0
         try:
             with db:
@@ -116,7 +151,7 @@ def ingest(db, cfg, end):
                     else:
                         parsed, rejected = parse_html(payload, d)
                         save_events(db, source, parsed)
-                    slices, rows, flagged = slices+1, rows+len(parsed), flagged+rejected
+                    slices, rows, flagged = slices + 1, rows + len(parsed), flagged + rejected
                 log(db, source, end, "ok", slices, rows, flagged)
         except Exception as e:
             with db:
@@ -128,11 +163,13 @@ def ingest(db, cfg, end):
 def ingest_public(db, cfg, today):
     source = "kudago_json"
     try:
-        if db.execute("SELECT 1 FROM raw WHERE source=? AND slice=?", (source, str(today))).fetchone():
+        if db.execute(
+            "SELECT 1 FROM raw WHERE source=? AND slice=?", (source, str(today))
+        ).fetchone():
             with db:
                 log(db, source, today, "ok", 0, 0, 0, "cached daily snapshot")
             return True
-        first, last = today + DAY, today + cfg["horizon"]*DAY
+        first, last = today + DAY, today + cfg["horizon"] * DAY
         data = fetch_events(cfg, first, last)
         events, bad = parse_public(data, today, first, last)
         with db:
@@ -151,8 +188,9 @@ def ingest_archive(db, path, end):
         text = path.read_text(encoding="utf-8-sig")
         snapshot, events = parse_archive(text)
         with db:
-            r = db.execute("SELECT sha256 FROM raw WHERE source=? AND slice=?",
-                           (ARCHIVE_SOURCE, str(snapshot))).fetchone()
+            r = db.execute(
+                "SELECT sha256 FROM raw WHERE source=? AND slice=?", (ARCHIVE_SOURCE, str(snapshot))
+            ).fetchone()
             if r:
                 if r[0] != hashlib.sha256(text.encode()).hexdigest():
                     raise ValueError("Архив на эту дату уже загружен с другим содержимым.")
@@ -160,8 +198,10 @@ def ingest_archive(db, path, end):
                 return True
             save_raw(db, ARCHIVE_SOURCE, snapshot, text)
             save_events(db, ARCHIVE_SOURCE, events)
-            db.executemany("INSERT OR IGNORE INTO event_provenance VALUES (?,?,?,?,?)",
-                           [(ARCHIVE_SOURCE,e["id"],e["url"],e["basis"],str(snapshot)) for e in events])
+            db.executemany(
+                "INSERT OR IGNORE INTO event_provenance VALUES (?,?,?,?,?)",
+                [(ARCHIVE_SOURCE, e["id"], e["url"], e["basis"], str(snapshot)) for e in events],
+            )
             log(db, ARCHIVE_SOURCE, end, "ok", 1, len(events), 0, f"snapshot {snapshot}")
         return True
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
@@ -176,7 +216,10 @@ def journal(db, limit=12):
 
 def fingerprint(db, cutoff):
     h = hashlib.sha256()
-    for r in db.execute("SELECT source,slice,sha256 FROM raw WHERE source IN ('pms_csv','event_html') "
-                        "AND slice<=? ORDER BY source,slice", (str(cutoff),)):
+    for r in db.execute(
+        "SELECT source,slice,sha256 FROM raw WHERE source IN ('pms_csv','event_html') "
+        "AND slice<=? ORDER BY source,slice",
+        (str(cutoff),),
+    ):
         h.update((":".join(r) + "\n").encode())
     return h.hexdigest()

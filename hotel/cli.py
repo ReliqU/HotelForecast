@@ -1,12 +1,14 @@
 """Command line entry points for building, serving and reproducing the prototype."""
+
 import argparse
+import json
+import sys
+import tempfile
+import webbrowser
 from contextlib import closing
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 from pathlib import Path
-import sys
-import tempfile
 from urllib.parse import urlsplit
 
 from .pipeline import replay, run
@@ -14,11 +16,16 @@ from .sources import MSK
 from .storage import connect, ingest, ingest_archive, ingest_public
 
 ROOT = Path(__file__).resolve().parents[1]
+DASHBOARD_SOURCE = ROOT / "hotel"
+DEFAULT_PORT = 8765
 
 
-def atomic(path, text):
+def write_atomic(path, text):
+    """Publish a complete file so a reader never sees a partial response."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=path.parent, delete=False) as f:
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", newline="\n", dir=path.parent, delete=False
+    ) as f:
         name = Path(f.name)
         f.write(text)
     try:
@@ -29,26 +36,37 @@ def atomic(path, text):
 
 def render(out, results):
     payload = json.dumps(results, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-    template = (ROOT / "hotel" / "dashboard.html").read_text(encoding="utf-8")
+    template = (DASHBOARD_SOURCE / "dashboard.html").read_text(encoding="utf-8")
+    styles = (DASHBOARD_SOURCE / "dashboard.css").read_text(encoding="utf-8").strip()
+    script = (DASHBOARD_SOURCE / "dashboard.js").read_text(encoding="utf-8").strip()
+    # JSON lives inside a script element. Escape characters that could end it.
     embedded = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    atomic(out / "forecast.html", template.replace("__HOTEL_DATA__", embedded))
-    atomic(out / "results.json", payload)
+    html = (
+        template.replace("__HOTEL_STYLES__", styles, 1)
+        .replace("__HOTEL_SCRIPT__", script, 1)
+        .replace("__HOTEL_DATA__", embedded, 1)
+    )
+    write_atomic(out / "forecast.html", html)
+    write_atomic(out / "results.json", payload)
 
 
-def serve(out, port):
-    routes = {"/": ("forecast.html", "text/html; charset=utf-8"),
-              "/api/data": ("results.json", "application/json; charset=utf-8")}
+def serve(out, port, *, open_browser=False):
+    routes = {
+        "/": ("forecast.html", "text/html; charset=utf-8"),
+        "/api/data": ("results.json", "application/json; charset=utf-8"),
+    }
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            url = urlsplit(self.path).path
-            if url == "/health":
-                content = b'{"status":"ok"}' if (out/"results.json").is_file() else b'{"status":"unbuilt"}'
-                kind, code = "application/json", 200 if b'"ok"' in content else 503
-            elif url in routes:
-                name, kind = routes[url]
+            route = urlsplit(self.path).path
+            if route == "/health":
+                ready = (out / "results.json").is_file()
+                content = b'{"status":"ok"}' if ready else b'{"status":"unbuilt"}'
+                kind, code = "application/json", 200 if ready else 503
+            elif route in routes:
+                name, kind = routes[route]
                 try:
-                    content, code = (out/name).read_bytes(), 200
+                    content, code = (out / name).read_bytes(), 200
                 except FileNotFoundError:
                     return self.send_error(503, "Run the build command first")
             else:
@@ -62,77 +80,141 @@ def serve(out, port):
             self.wfile.write(content)
 
     with ThreadingHTTPServer(("127.0.0.1", port), Handler) as httpd:
-        print(f"http://127.0.0.1:{httpd.server_port}", flush=True)
+        url = f"http://127.0.0.1:{httpd.server_port}"
+        print(url, flush=True)
+        if open_browser:
+            try:
+                opened = webbrowser.open(url)
+            except webbrowser.Error:
+                opened = False
+            if not opened:
+                print("Откройте указанный адрес в браузере.", file=sys.stderr)
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             pass
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", type=Path, default=ROOT/"config.json")
-    ap.add_argument("--db", type=Path, default=ROOT/"build"/"hotel.sqlite")
-    ap.add_argument("--out", type=Path, default=ROOT/"build")
-    ap.add_argument("--archive-file", type=Path, default=ROOT/"data"/"public_events.json")
-    commands = ap.add_subparsers(dest="command", required=True)
+def make_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=ROOT / "config.json")
+    parser.add_argument("--db", type=Path, default=ROOT / "build" / "hotel.sqlite")
+    parser.add_argument("--out", type=Path, default=ROOT / "build")
+    parser.add_argument("--archive-file", type=Path, default=ROOT / "data" / "public_events.json")
+    commands = parser.add_subparsers(dest="command", required=True)
     for name in ("build", "ingest", "demo"):
-        cmd = commands.add_parser(name)
-        cmd.add_argument("--as-of", type=date.fromisoformat)
-        mode = cmd.add_mutually_exclusive_group()
+        command = commands.add_parser(name)
+        command.add_argument("--as-of", type=date.fromisoformat)
+        mode = command.add_mutually_exclusive_group()
         mode.add_argument("--public", action="store_true", help="Запросить свежую афишу KudaGo")
-        mode.add_argument("--archive", action="store_true", help="Показать прогноз с публичной афишей из архива")
+        mode.add_argument(
+            "--archive", action="store_true", help="Показать прогноз с публичной афишей из архива"
+        )
         if name == "demo":
-            cmd.add_argument("--port", type=int, default=8765)
-    commands.add_parser("serve").add_argument("--port", type=int, default=8765)
+            add_server_options(command)
+    add_server_options(commands.add_parser("serve"))
     commands.add_parser("replay").add_argument("id")
-    a = ap.parse_args(argv)
-    if a.command == "serve":
-        serve(a.out, a.port)
+    return parser
+
+
+def add_server_options(command):
+    command.add_argument("--port", type=int, default=DEFAULT_PORT)
+    command.add_argument("--open-browser", action="store_true", help="Открыть дашборд в браузере")
+
+
+def read_config(path):
+    config = json.loads(path.read_text(encoding="utf-8-sig"))
+    date.fromisoformat(config["start"])
+    date.fromisoformat(config["as_of"])
+    horizon = config["horizon"]
+    if horizon != 14:
+        raise ValueError("Горизонт должен быть равен 14 дням.")
+    for period in ("validation_days", "test_days", "audit_days", "confirmation_days"):
+        if config[period] < 28 or config[period] % horizon:
+            raise ValueError(f"{period} должен быть кратен 14 и не короче 28 дней.")
+    hotel_ids = [hotel["id"] for hotel in config["hotels"]]
+    if not hotel_ids or len(set(hotel_ids)) != len(hotel_ids):
+        raise ValueError("Укажите гостиницы с уникальными ID.")
+    if config["train_stride"] < 1 or config["request_retries"] < 1:
+        raise ValueError("Шаг обучения и число попыток должны быть положительными.")
+    stress = config["stress"]
+    if not (
+        stress["days"] >= 28
+        and stress["days"] % horizon == 0
+        and 0 <= stress["event_scale"] <= 1
+        and 0 <= stress["late_share"] <= 1
+        and 0 <= stress["notice_days"] < horizon
+    ):
+        raise ValueError("Проверьте длину и параметры стресс-периода.")
+    return config
+
+
+def build_dashboard(db, config, options, end, today):
+    print(json.dumps(ingest(db, config, end), ensure_ascii=False))
+    archive_ready = ingest_archive(db, options.archive_file, end)
+    if not archive_ready:
+        print("Публичный архив не загружен. Подробности в журнале.", file=sys.stderr)
+        if options.archive:
+            return 1
+    public_ready = options.public and ingest_public(db, config, today)
+    if options.public and not public_ready:
+        print("KudaGo недоступен. Используется автономная афиша.", file=sys.stderr)
+    if options.command != "ingest":
+        result = run(db, config, end, public_ready, options.archive and archive_ready)
+        render(options.out, result)
+        for target, metrics in result["targets"].items():
+            winner = metrics["winner"]
+            baseline = metrics["baseline"]["test"]["mae"]
+            print(
+                f"{target}: {winner['family']}; test MAE={winner['test']['mae']:.2f}; "
+                f"baseline={baseline:.2f}; ID={winner['id']}"
+            )
+        print(options.out / "forecast.html", flush=True)
+    return 0
+
+
+def main(argv=None):
+    parser = make_parser()
+    options = parser.parse_args(argv)
+    if hasattr(options, "port") and not 0 <= options.port <= 65535:
+        parser.error("Порт должен быть целым числом от 0 до 65535.")
+    if options.command == "serve":
+        try:
+            serve(options.out, options.port, open_browser=options.open_browser)
+        except OSError as error:
+            parser.exit(1, f"Не удалось запустить сервер на порту {options.port}: {error}\n")
         return 0
-    cfg = json.loads(a.config.read_text(encoding="utf-8-sig"))
-    anchor = date.fromisoformat(cfg["as_of"])
-    if cfg["horizon"] != 14 or not all(cfg[n] >= 28 and cfg[n] % 14 == 0 for n in ("validation_days", "test_days")):
-        ap.error("Для этого проекта горизонт 14 дней, периоды валидации и теста кратны 14 и не короче 28 дней.")
-    if cfg["train_stride"] < 1 or cfg["request_retries"] < 1 or len({h["id"] for h in cfg["hotels"]}) != len(cfg["hotels"]):
-        ap.error("Проверьте шаг обучения, число попыток и уникальность ID отелей.")
-    spec = cfg["stress"]
-    if not (spec["days"] >= 28 and spec["days"] % cfg["horizon"] == 0
-            and 0 <= spec["event_scale"] <= 1 and 0 <= spec["late_share"] <= 1
-            and 0 <= spec["notice_days"] < cfg["horizon"]):
-        ap.error("Проверьте длину и параметры стресс-периода.")
-    if not all(cfg[n] >= 28 and cfg[n] % cfg["horizon"] == 0 for n in ("audit_days","confirmation_days")):
-        ap.error("Длины диагностического и подтверждающего периодов должны быть кратны горизонту и не короче 28 дней.")
-    a.db.parent.mkdir(parents=True, exist_ok=True)
-    with closing(connect(a.db, cfg)) as db:
-        if a.command == "replay":
-            r = replay(db, a.id)
-            print(json.dumps(r, ensure_ascii=False, indent=2))
-            return 0 if r["reproduced"] else 1
+    try:
+        config = read_config(options.config)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        parser.error(f"Ошибка в {options.config}: {error}")
+
+    anchor = date.fromisoformat(config["as_of"])
+    if options.command != "replay":
         today = datetime.now(MSK).date()
-        end = a.as_of or (today if a.public else anchor)
-        if a.public and end != today:
-            ap.error("--public загружает текущий снимок; архивные даты недоступны.")
-        if end < anchor and a.command in ("build", "demo"):
-            ap.error("Дата расчёта не может предшествовать опорной дате в config.json.")
-        print(json.dumps(ingest(db, cfg, end), ensure_ascii=False))
-        archive_ready = ingest_archive(db, a.archive_file, end)
-        if not archive_ready:
-            print("Публичный архив не загружен; см. журнал.", file=sys.stderr)
-            if a.archive:
-                return 1
-        public = a.public and ingest_public(db, cfg, today)
-        if a.public and not public:
-            print("KudaGo недоступен; используется автономная афиша. Подробности в журнале.", file=sys.stderr)
-        if a.command != "ingest":
-            result = run(db, cfg, end, public, a.archive and archive_ready)
-            render(a.out, result)
-            for t, row in result["targets"].items():
-                print(f"{t}: {row['winner']['family']}; test MAE={row['winner']['test']['mae']:.2f}; "
-                      f"baseline={row['baseline']['test']['mae']:.2f}; ID={row['winner']['id']}")
-            print(a.out / "forecast.html", flush=True)
-    if a.command == "demo":
-        serve(a.out, a.port)
+        end = options.as_of or (today if options.public else anchor)
+        if options.public and end != today:
+            parser.error("--public загружает снимок только на текущую дату.")
+        if end < anchor and options.command in ("build", "demo"):
+            parser.error("Дата расчёта не может предшествовать опорной дате в config.json.")
+
+    options.db.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with closing(connect(options.db, config)) as db:
+            if options.command == "replay":
+                result = replay(db, options.id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0 if result["reproduced"] else 1
+            status = build_dashboard(db, config, options, end, today)
+            if status != 0:
+                return status
+    except ValueError as error:
+        parser.exit(1, f"{error}\n")
+    if options.command == "demo":
+        try:
+            serve(options.out, options.port, open_browser=options.open_browser)
+        except OSError as error:
+            parser.exit(1, f"Не удалось запустить сервер на порту {options.port}: {error}\n")
     return 0
 
 

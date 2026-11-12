@@ -1,178 +1,99 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Горизонт — прогноз для гостиниц</title>
-<style>
-:root{color-scheme:light;--ink:#142b36;--muted:#546b75;--paper:#f2f5f0;--white:#fff;--teal:#08776d;--lime:#c5e8b9;--line:#dbe6df;--navy:#15343b}
-*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 "Segoe UI",Arial,sans-serif}button,select{font:inherit}button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #1a9f8b;outline-offset:3px}button,select,summary{cursor:pointer}
-.wrap{max-width:1240px;padding:0 28px;margin:auto}.mast{background:var(--navy);color:#fff}.mast .wrap{display:flex;align-items:center;justify-content:space-between;padding-top:17px;padding-bottom:17px}.brand{display:flex;gap:10px;align-items:center;font-weight:750;font-size:20px}.mark{width:23px;height:23px;border:2px solid #bceabb;border-radius:50%;display:grid;place-items:center}.mark:after{content:"";display:block;width:12px;border-top:2px solid #bceabb;transform:rotate(-37deg)}.tag{color:#d8e9df;font-size:12px;text-align:right}
-.intro{padding:40px 0 21px;display:flex;justify-content:space-between;gap:24px;align-items:end}.over{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--teal);font-weight:800}.intro h1{font-size:clamp(33px,5vw,52px);letter-spacing:-.055em;line-height:1.06;margin:5px 0 10px;font-weight:760}.intro p{margin:0;color:var(--muted);max-width:670px}.filters{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.filters label{font-size:12px;color:var(--muted);font-weight:700}select{color:var(--ink);border:1px solid #bdd4c7;background:#fff;border-radius:8px;padding:9px 29px 9px 10px;display:block;margin-top:3px}
-.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}.metric{background:#e6efe4;border:1px solid #d8e6da;border-radius:12px;padding:14px 17px;min-width:0}.metric:first-child{background:#dceee2}.metric span,.metric small{display:block;color:var(--muted);font-size:13px}.metric strong{display:block;font-size:clamp(22px,3vw,33px);letter-spacing:-.045em;line-height:1.18;margin:4px 0}
-.workspace{display:grid;grid-template-columns:minmax(0,2fr) minmax(270px,1fr);gap:14px}.panel,details{background:#fff;border:1px solid var(--line);border-radius:14px}.panel{padding:18px 20px}.panel h2{margin:0;font-size:20px;letter-spacing:-.025em}.panel p,details p{margin:5px 0 10px;color:var(--muted);font-size:13px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.tabs{display:flex;background:#eef4ef;border-radius:8px;padding:3px;gap:2px}.tabs button{border:0;background:none;padding:5px 10px;border-radius:6px;font-size:13px;color:var(--muted)}.tabs button[aria-pressed=true]{background:var(--navy);color:#fff}.legend{display:flex;flex-wrap:wrap;gap:15px;font-size:12px;color:var(--muted);margin:4px 0 0}.legend i{display:inline-block;width:18px;border-top:3px solid;margin-right:5px;vertical-align:middle}.legend .base{border-top-style:dashed}
-svg{width:100%;height:auto;display:block;overflow:visible}svg text{font:12px "Segoe UI",sans-serif;fill:var(--muted)}#mainChart{margin:4px 0 2px;touch-action:manipulation}#mainChart .pick{cursor:pointer}#mainChart .pick:hover{opacity:.55}
-.days{width:100%;margin:8px 0;color:var(--teal);accent-color:var(--teal)}.day-label{color:var(--muted);font-size:12px}.val{font-weight:750;font-size:28px;letter-spacing:-.05em;color:var(--teal);margin-top:4px}.micro{color:var(--muted);font-size:12px}.driver{display:grid;grid-template-columns:minmax(110px,1fr) 68px auto;gap:8px;align-items:center;margin-top:7px;font-size:12px}.track{background:#e7efe8;height:5px;border-radius:6px;overflow:hidden}.track i{display:block;height:5px;background:#168576}.driver em{font-style:normal;font-variant-numeric:tabular-nums}.side h3{font-size:14px;margin:14px 0 2px}.side ol,.side ul{padding-left:20px;margin:4px 0;font-size:13px}.download{border:1px solid #bdd4c7;background:#fff;color:var(--ink);border-radius:7px;padding:6px 10px;font-size:12px}
-.sections{margin:14px 0 37px}.sections details{margin-bottom:8px}.sections summary{padding:12px 17px;font-size:15px;font-weight:700}.inside{padding:0 17px 14px}.scroller{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}th,td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:700;background:#f4f7f3}tbody tr.win td{background:#e8f4eb;font-weight:700}.dim{color:var(--muted)}code{font-size:12px}footer{margin:16px 0 26px;color:var(--muted);font-size:12px}
-@media(max-width:820px){.wrap{padding:0 16px}.intro{display:block;padding:27px 0 17px}.filters{justify-content:flex-start;margin-top:14px}.workspace{grid-template-columns:1fr}.panel{padding:14px}.metric{padding:9px}.metric span,.metric small{font-size:11px}}
-@media(max-width:440px){.metrics{gap:5px}.metric strong{font-size:18px}.tabs button{padding:5px 7px}.intro h1{font-size:35px}}
-</style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Горизонт — прогноз для гостиниц</title>
+    <style>
+__HOTEL_STYLES__
+    </style>
 </head>
 <body>
-<header class="mast"><div class="wrap"><div class="brand"><span class="mark" aria-hidden="true"></span> Горизонт</div><div class="tag">Учебный прототип<br>Тема 17 · НИТУ МИСИС</div></div></header>
-<main class="wrap">
-<section class="intro"><div><div class="over" id="asof"></div><h1>Прогноз для гостиниц</h1><p id="mode"></p></div>
-<div class="filters"><label>Гостиница<select id="hotel"></select></label><label>Показатель<select id="target"><option value="occupancy">Загрузка</option><option value="adr">Средняя цена</option></select></label><label>Афиша<select id="eventMode"></select></label></div></section>
-<div class="metrics" id="metrics"></div>
-<div class="workspace">
-  <section class="panel"><div class="row"><h2 id="chartTitle"></h2><div class="tabs"><button id="future" aria-pressed="true">Прогноз</button><button id="test" aria-pressed="false">Проверка</button></div></div><p id="chartNote"></p>
-  <div class="legend"><span><i style="border-color:#35566b"></i>Факт</span><span><i style="border-color:#0c8a77"></i>Выбранная модель</span><span><i class="base" style="border-color:#a46d2d"></i>Сезонная медиана</span></div>
-  <svg id="mainChart" viewBox="0 0 760 286" role="img" aria-label="Ряд фактических и прогнозных значений"></svg>
-  <div class="row"><label class="day-label" for="day">Дата: <b id="selectedDate"></b></label><button id="download" class="download">Скачать CSV</button></div>
-  <input type="range" id="day" class="days" min="0" value="0" aria-label="Выбор даты на графике">
-  </section>
-  <aside class="panel side" id="detail"></aside>
-</div>
-<section class="sections">
-<details open><summary>Насколько точен прогноз</summary><div class="inside" id="quality"></div></details>
-<details id="confirmPanel"><summary>Проверка новой схемы</summary><div class="inside" id="confirmation"></div></details>
-<details id="stressPanel"><summary>Стресс-тест на новом периоде</summary><div class="inside" id="stress"></div></details>
-<details id="archivePanel"><summary>Источники публичного архива</summary><div class="inside">
-  <p id="archiveNote"></p><label>Что было известно на дату <input type="date" id="archiveDay"></label>
-  <div id="archive"></div></div></details>
-<details><summary>Какие признаки влияют на прогноз</summary><div class="inside" id="importance"></div></details>
-<details><summary>Эксперименты и журнал загрузок</summary><div class="inside" id="logs"></div></details>
-</section>
-<footer id="footer"></footer>
-</main>
-<script type="application/json" id="payload">__HOTEL_DATA__</script>
-<script>
-'use strict';
-const $=id=>document.getElementById(id),
-  D=new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'short',timeZone:'UTC'});
-const num=(v,d=1)=>v==null?'—':new Intl.NumberFormat('ru-RU',{maximumFractionDigits:d}).format(v);
-const dateLabel=d=>D.format(new Date(d+'T00:00:00Z'));
-const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let data=JSON.parse($('payload').textContent), view='future', idx=0, current=null;
-const sign=(v,d)=> (v>0?'+':'')+num(v,d);
-const modeNames={event_html:'Учебная',public_archive:'Публичный архив',kudago_json:'KudaGo'};
-function init(){const last=$('hotel').value, prior=$('eventMode').value;
-  $('hotel').innerHTML=data.hotels.map(h=>'<option value="'+escape(h.id)+'">'+escape(h.name)+'</option>').join('');
-  $('eventMode').innerHTML=Object.keys(data.forecasts).map(m=>'<option value="'+escape(m)+'">'+escape(modeNames[m])+'</option>').join('');
-  if(data.hotels.some(h=>h.id===last))$('hotel').value=last;
-  $('eventMode').value=prior in data.forecasts?prior:data.event_source;
-  $('archivePanel').hidden=!data.archive;
-  $('archiveDay').max=data.as_of;
-  if(!$('archiveDay').value || $('archiveDay').value>data.as_of)$('archiveDay').value=data.as_of;
-  paintArchive();
-  paint();}
-const basis=e=>e.basis==='published'?'опубликовано':'зафиксировано';
-const eventLink=e=>e.url?.startsWith('https://')?'<a href="'+escape(e.url)+'" target="_blank" rel="noopener noreferrer">'+escape(e.title)+'</a>':escape(e.title);
-function paintArchive(){
-  if(!data.archive)return;
-  const cutoff=$('archiveDay').value||data.as_of, rows=data.archive.events.filter(e=>e.available_from<=cutoff);
-  $('archiveNote').textContent='Снимок от '+data.archive.snapshot+
-    '. Дата фильтра меняет только этот список. Если издатель не указал дату публикации, используем дату первого наблюдения.';
-  $('archive').innerHTML=rows.length?'<ul>'+rows.map(e=>'<li>'+eventLink(e)+' · '+escape(e.venue)+' · '+
-    escape(e.start)+' — '+escape(e.end)+' <span class="micro">('+basis(e)+' '+escape(e.available_from)+')</span></li>').join('')+
-    '</ul>':'<p>На выбранную дату ни одна запись из этого архива не была доступна.</p>';
-}
-const grid=(header,rows,chosen=()=>false)=>'<div class="scroller"><table><thead><tr>'+header.map(x=>'<th>'+escape(x)+'</th>').join('')+
-  '</tr></thead><tbody>'+rows.map((r,i)=>'<tr class="'+(chosen(i)?'win':'')+'">'+r.map(x=>'<td>'+escape(x)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
-function plot(rows, series, opt){
-  const {W,H,L,T,R,B} = {W:760,H:286,L:62,T:19,R:25,B:34}, {digits,selected,start,unit}=opt;
-  const values=rows.flatMap(r=>series.map(s=>r[s.key])).filter(Number.isFinite);
-  const low=Math.min(...values), high=Math.max(...values), pad=Math.max((high-low)*.12,1);
-  const lo=Math.max(0,low-pad), hi=Math.min(unit==='%'?100:Infinity,high+pad), X=i=>L+i*(W-L-R)/Math.max(1,rows.length-1), Y=v=>T+(hi-v)*(H-T-B)/(hi-lo);
-  let html='';
-  if(start!=null)html+='<rect x="'+(X(start)-(X(1)-X(0))/2)+'" y="'+T+'" width="'+(W-R-X(start)+(X(1)-X(0))/2)+'" height="'+(H-T-B)+'" rx="4" fill="#e8f5eb"/>';
-  for(let k=0;k<5;k++){let v=lo+(hi-lo)*k/4,y=Y(v);html+='<path d="M '+L+' '+y+' H '+(W-R)+'" stroke="#e0e9e4"/><text x="'+(L-8)+'" y="'+(y+4)+'" text-anchor="end">'+escape(num(v,digits))+'</text>';}
-  for(let k=0;k<=5;k++){let i=Math.round(k*(rows.length-1)/5);html+='<text x="'+X(i)+'" y="'+(H-8)+'" text-anchor="middle">'+escape(dateLabel(rows[i].date))+'</text>';}
-  if(selected!=null)html+='<path d="M '+X(selected)+' '+T+' V '+(H-B)+'" stroke="#7b9c91" stroke-dasharray="4 4"/>';
-  for(const s of series){let path='',active=false;
-    rows.forEach((r,i)=>{let v=r[s.key];if(!Number.isFinite(v)){active=false;return;}path+=(active?' L ':' M ')+X(i)+' '+Y(v);active=true;});
-    html+='<path d="'+path+'" fill="none" stroke="'+s.color+'" stroke-width="'+s.width+'" '+(s.dash?'stroke-dasharray="6 5"':'')+' stroke-linejoin="round" stroke-linecap="round"/>';
-    if(selected!=null&&Number.isFinite(rows[selected][s.key]))html+='<circle cx="'+X(selected)+'" cy="'+Y(rows[selected][s.key])+'" r="4.5" fill="'+s.color+'" stroke="white" stroke-width="2"/>';
-  }
-  const first=start??0, dx=(X(1)-X(0))/2;
-  for(let i=first;i<rows.length;i++)html+='<rect class="pick" data-i="'+(i-first)+'" x="'+(X(i)-dx)+'" y="'+T+'" width="'+(2*dx)+'" height="'+(H-T-B)+'" fill="#0d7e6b" opacity="0"><title>'+escape(dateLabel(rows[i].date)+' · '+num(rows[i].model,digits)+' '+unit)+'</title></rect>';
-  return html;
-}
-function paint(){
-  const h=$('hotel').value,t=$('target').value, isOcc=t==='occupancy', q=data.targets[t], d=isOcc?1:0, suffix=isOcc?'%':' ₽', unit=q.unit;
-  const mode=$('eventMode').value, forecast=data.forecasts[mode][h], tests=data.backtest[h][t], all=view==='future'?forecast:tests;
-  idx=Math.max(0,Math.min(idx,all.length-1)); const selected=all[idx];
-  const display=v=>num(v,d)+suffix, error=v=>num(v,d)+' '+unit;
-  $('asof').textContent='Дата расчёта · '+dateLabel(data.as_of)+' '+data.as_of.slice(0,4);
-  $('mode').textContent=view==='test'?'Отложенный тест на учебных гостиницах и синтетической афише.':
-    {event_html:'Загрузка и цена на 14 дней. Учебные гостиницы и афиша смоделированы.',
-    public_archive:'Открытые анонсы организаторов и учебные гостиницы. Архив выборочный, качество прогноза на нём не измерялось.',
-    kudago_json:'Учебные гостиницы, для будущих дат подключена афиша KudaGo. Режим экспериментальный.'}[mode];
-  $('eventMode').disabled=view==='test';
-  const avg=forecast.reduce((a,r)=>a+r[t].value,0)/forecast.length, peak=forecast.reduce((a,b)=>a[t].value>b[t].value?a:b), saved=q.baseline.test.mae-q.winner.test.mae;
-  $('metrics').innerHTML=[['Среднее за 14 дней',display(avg),'По прогнозу выбранной гостиницы'],['Пиковый день',display(peak[t].value),dateLabel(peak.date)],['Ошибка модели на тесте',error(q.winner.test.mae),'MAE по всем гостиницам']].map(v=>'<div class="metric"><span>'+v[0]+'</span><strong>'+v[1]+'</strong><small>'+v[2]+'</small></div>').join('');
-  $('chartTitle').textContent=view==='future'?'План на ближайшие 14 дней':'Проверка на отложенном периоде';
-  $('chartNote').textContent=view==='future'?'Последние 28 дней и новый прогноз. Нажмите на дату для объяснения.':'Факт и прогноз на датах, не участвовавших в подборе модели.';
-  $('future').setAttribute('aria-pressed',view==='future');$('test').setAttribute('aria-pressed',view==='test');
-  const past=data.history[h].slice(-28);
-  const rows=view==='future'?[...past.map(r=>({date:r.date,fact:r[t]})),...forecast.map(r=>({date:r.date,model:r[t].value,baseline:r[t].baseline}))]:tests;
-  $('mainChart').innerHTML=plot(rows,[{key:'fact',color:'#35566b',width:2},{key:'baseline',color:'#a46d2d',width:1.8,dash:true},{key:'model',color:'#0c8a77',width:3}],{digits:0,unit:suffix.trim(),start:view==='future'?past.length:null,selected:idx+(view==='future'?past.length:0)});
-  $('day').max=all.length-1;$('day').value=idx;$('selectedDate').textContent=dateLabel(selected.date);$('day').setAttribute('aria-valuetext',dateLabel(selected.date));
-  const loc=q.winner.label;
-  if(view==='future'){
-    const p=selected[t], ranked=data.features.map((name,i)=>[name,p.contributions[i]]).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
-    const active=q.winner.family==='hybrid'?(idx<q.winner.params.split?'Регрессия Хьюбера':'Линейная регрессия Ridge')+' · день '+(idx+1):loc;
-    const vmax=Math.max(...ranked.map(v=>Math.abs(v[1])),.001);
-    const driver=([name,v])=>'<div class="driver"><span>'+escape(name)+'</span><span class="track"><i style="width:'+100*Math.abs(v)/vmax+'%"></i></span><em>'+sign(v,d)+' '+unit+'</em></div>';
-    const events=selected.events.length?'<ul>'+selected.events.map(e=>'<li>'+eventLink(e)+(e.venue?' · '+escape(e.venue):'')+
-      (e.basis?'<br><span class="micro">'+basis(e)+' '+escape(e.available_from)+'</span>':'')+'</li>').join('')+'</ul>':
-      '<p>В выбранной афише на эту дату нет доступных записей.</p>';
-    $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(p.value)+'</div><div class="micro">'+escape(active)+'</div><h3>Главные факторы прогноза</h3><p>Отсчёт модели: '+display(p.intercept)+'. Знак показывает направление вклада.</p>'+ranked.slice(0,4).map(driver).join('')+
-      '<details style="margin-top:10px"><summary style="padding:6px 9px;font-size:12px">Все вклады</summary><div style="padding:0 9px 8px">'+ranked.map(driver).join('')+(Math.abs(p.clip)>1e-8?'<p>Ограничение диапазона: '+error(p.clip)+'</p>':'')+'</div></details><h3>Известные мероприятия</h3>'+events;
-  }else $('detail').innerHTML='<h2>'+escape(dateLabel(selected.date))+'</h2><div class="val">'+display(selected.model)+'</div><div class="micro">Прогноз выпущен '+escape(dateLabel(selected.origin))+'</div><h3>Факт и ошибка</h3><p>Факт: <b>'+display(selected.fact)+'</b><br>Абсолютная ошибка: <b>'+error(Math.abs(selected.model-selected.fact))+'</b><br>Сезонная медиана: '+display(selected.baseline)+'</p>';
-  $('quality').innerHTML='<p>Модель в рабочем прогнозе: '+escape(loc)+'. На исходном тесте '+(Math.abs(saved)<1e-8?'MAE совпала с сезонной медианой.':
-      'MAE '+(saved>0?'ниже на ':'выше на ')+error(Math.abs(saved))+' относительно сезонной медианы.')+' Метрики показаны по всем гостиницам.</p>'+
-    grid(['Модель','MAE валидация, '+unit,'MAE тест, '+unit,'RMSE тест, '+unit],q.finalists.map(r=>[r.label,num(r.validation.mae,2),num(r.test.mae,2),num(r.test.rmse,2)]),i=>q.finalists[i].family===q.winner.family)+
-    '<p>MAE по горизонту: 1–7 дней — '+error(q.by_horizon['1–7'].mae)+'; 8–14 дней — '+error(q.by_horizon['8–14'].mae)+'. MAE той же модели без признаков афиши: '+error(q.without_events.mae)+'.</p>';
-  const conf=data.confirmation, cmp=conf.targets[t], summary={previous:cmp.previous,candidate:cmp.candidate};
-  const metricsRow=(label, r)=>[label,num(r.previous.mae,2),num(r.candidate.mae,2),num(r.previous.rmse,2),num(r.candidate.rmse,2),r.candidate.n];
-  $('confirmation').innerHTML='<p>Синтетический период '+escape(conf.start)+' — '+escape(conf.end)+
-    '. Хьюбер используется на днях 1–7, Ridge на днях 8–14. Все параметры зафиксированы до проверочного периода.</p>'+
-    grid(['Срез','MAE Ridge, '+unit,'MAE схемы, '+unit,'RMSE Ridge, '+unit,'RMSE схемы, '+unit,'Прогнозы'],[
-      metricsRow('Все прогнозы',summary),...Object.entries(cmp.by_horizon).map(([k,r])=>metricsRow('Дни '+k,r)),
-      ...data.hotels.map(h=>metricsRow(h.name,cmp.by_hotel[h.id]))],i=>i===0)+
-    '<p>'+ (cmp.promoted?'Комбинация прошла проверку и используется для этого показателя.':
-      'Для этого показателя оставлена Ridge: '+(cmp.candidate.mae>=cmp.previous.mae?'средняя абсолютная ошибка комбинации не снизилась.':'RMSE выросла более чем на 5%.'))+
-    ' Схема точнее в '+cmp.windows_better+' из '+conf.origins+' окон. Результаты относятся к симуляции.</p>';
-  const st=data.stress, models=q.finalists;
-  $('stress').innerHTML='<p>Синтетические факты с '+escape(st.start)+' по '+escape(st.end)+'. Модели обучены по '+
-    escape(st.frozen_through)+' и заморожены. Слабый эффект: '+num(100*st.spec.event_scale,0)+'% прежнего. В сценарии задержки перенесено '+
-    st.scenarios.find(s=>s.late).shifted+' из '+st.scenarios.find(s=>s.late).eligible+' ещё не опубликованных анонсов.</p>'+
-    grid(['Сценарий · MAE, '+unit,...models.map(r=>r.label)],st.scenarios.map(s=>[s.label,...models.map(r=>num(s.targets[t][r.family].mae,2))]))+
-    '<p>Меньше — лучше. Даты, случайный шум и границы прогноза одинаковы во всех сценариях.</p>';
-  const imp=q.importance.slice(0,8);
-  $('importance').innerHTML='<p>Вклад признаков рассчитан на отложенной истории. Перемешивание показывает изменение MAE, если нарушить связь отдельного признака с остальными наблюдениями. Коррелирующие признаки интерпретируются осторожно.</p>'+
-    grid(['Признак','Средний |вклад|','Прирост MAE','|Вклад| 1-я половина','|Вклад| 2-я половина'],imp.map(r=>[r.name,...['native','permutation','early','late'].map(k=>error(r[k]))]))+
-    '<p>Частичная зависимость: средний прогноз при изменении близости площадок. Это отклик модели, а не причинный эффект.</p>'+
-    grid(['Индекс близости','Средний прогноз'],q.pdp.map(r=>[num(r.value,2),display(r.prediction)]));
-  $('logs').innerHTML='<p>Подбор по валидации. Любой запуск можно повторить через <code>python -m hotel.cli replay ID</code>.</p>'+
-    grid(['ID','Модель','Настройки','MAE','RMSE'],q.candidates.map(r=>[r.id,r.label,JSON.stringify(r.params),num(r.validation.mae,2),num(r.validation.rmse,2)]),i=>q.candidates[i].id===q.winner.id)+
-    '<p>Последние запуски загрузки</p>'+grid(['Источник','До даты','Статус','Новых порций','Строк','Флаги'],data.journal.map(r=>[r.source,r.through_day,r.status,r.added_slices,r.rows,r.flagged]));
-  $('footer').textContent='Версия '+data.version+' · Данные '+data.data_hash.slice(0,12)+' · Тест по '+data.splits.test_end+' · '+data.splits.test_origins+' дат выпуска прогноза';
-  current={h,t,all};
-}
-$('hotel').onchange=$('target').onchange=()=>{idx=0;paint();};
-$('eventMode').onchange=()=>paint();
-$('archiveDay').onchange=()=>paintArchive();
-$('future').onclick=$('test').onclick=e=>{view=e.currentTarget.id;idx=0;paint();};
-$('day').oninput=e=>{idx=Number(e.currentTarget.value);paint();};
-$('mainChart').onclick=e=>{if(e.target.dataset.i!=null){idx=Number(e.target.dataset.i);paint();}};
-$('download').onclick=()=>{const {h,t,all}=current;let csv='date;forecast;seasonal_median;actual\r\n';
-  csv+=all.map(r=>[r.date, (view==='future'?r[t].value:r.model).toFixed(2),(view==='future'?r[t].baseline:r.baseline).toFixed(2),r.fact?.toFixed(2)??''].join(';')).join('\r\n');
-  const url=URL.createObjectURL(new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=h+'-'+t+'-'+view+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);};
-init();
-if(/^https?:$/.test(location.protocol))setInterval(async()=>{try{const r=await fetch('/api/data',{cache:'no-store'});if(!r.ok)return;
-  const n=await r.json();if(n.as_of!==data.as_of||n.data_hash!==data.data_hash||n.event_source!==data.event_source||n.journal[0]?.id!==data.journal[0]?.id){data=n;init();}}catch(_){}},15000);
-</script>
+    <header class="mast">
+        <div class="wrap">
+            <div class="brand"><span class="mark" aria-hidden="true"></span> Горизонт</div>
+            <div class="tag">Учебный прототип<br>Тема 17 · НИТУ МИСИС</div>
+        </div>
+    </header>
+    <main class="wrap">
+        <section class="intro">
+            <div>
+                <div class="over" id="asof"></div>
+                <h1>Прогноз для гостиниц</h1>
+                <p id="mode"></p>
+            </div>
+            <div class="filters">
+                <label>Гостиница <select id="hotel"></select></label>
+                <label>
+                    Показатель
+                    <select id="target">
+                        <option value="occupancy">Загрузка</option>
+                        <option value="adr">Средняя цена</option>
+                    </select>
+                </label>
+                <label>Афиша <select id="eventMode"></select></label>
+            </div>
+        </section>
+        <div class="metrics" id="metrics"></div>
+        <div class="workspace">
+            <section class="panel">
+                <div class="row">
+                    <h2 id="chartTitle"></h2>
+                    <div class="tabs">
+                        <button id="future" aria-pressed="true">Прогноз</button>
+                        <button id="test" aria-pressed="false">Проверка</button>
+                    </div>
+                </div>
+                <p id="chartNote"></p>
+                <div class="legend">
+                    <span><i style="border-color: #35566b"></i>Факт</span>
+                    <span><i style="border-color: #0c8a77"></i>Выбранная модель</span>
+                    <span><i class="base" style="border-color: #a46d2d"></i>Сезонная медиана</span>
+                </div>
+                <svg id="mainChart" viewBox="0 0 760 286" role="img" aria-label="Ряд фактических и прогнозных значений"></svg>
+                <div class="row">
+                    <label class="day-label" for="day">Дата: <b id="selectedDate"></b></label>
+                    <button id="download" class="download">Скачать CSV</button>
+                </div>
+                <input type="range" id="day" class="days" min="0" value="0" aria-label="Выбор даты на графике">
+            </section>
+            <aside class="panel side" id="detail"></aside>
+        </div>
+        <section class="sections">
+            <details open>
+                <summary>Насколько точен прогноз</summary>
+                <div class="inside" id="quality"></div>
+            </details>
+            <details id="confirmPanel">
+                <summary>Проверка новой схемы</summary>
+                <div class="inside" id="confirmation"></div>
+            </details>
+            <details id="stressPanel">
+                <summary>Стресс-тест на новом периоде</summary>
+                <div class="inside" id="stress"></div>
+            </details>
+            <details id="archivePanel">
+                <summary>Источники публичного архива</summary>
+                <div class="inside">
+                    <p id="archiveNote"></p>
+                    <label>Что было известно на дату <input type="date" id="archiveDay"></label>
+                    <div id="archive"></div>
+                </div>
+            </details>
+            <details>
+                <summary>Какие признаки влияют на прогноз</summary>
+                <div class="inside" id="importance"></div>
+            </details>
+            <details>
+                <summary>Эксперименты и журнал загрузок</summary>
+                <div class="inside" id="logs"></div>
+            </details>
+        </section>
+        <footer id="footer"></footer>
+    </main>
+    <script type="application/json" id="payload">__HOTEL_DATA__</script>
+    <script>
+__HOTEL_SCRIPT__
+    </script>
 </body>
 </html>
