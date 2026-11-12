@@ -11,13 +11,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .live import SOURCE_NAMES, load_live_schedule
 from .pipeline import replay, run
+from .rates import collect_market_rates
 from .sources import MSK
-from .storage import connect, ingest, ingest_archive, ingest_public
+from .storage import connect, ingest, ingest_archive
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_SOURCE = ROOT / "hotel"
 DEFAULT_PORT = 8765
+RATE_ARCHIVE = ROOT / "data" / "public_rates.json"
+REAL_ADR_VALIDATION = ROOT / "data" / "real_adr_validation.json"
 
 
 def write_atomic(path, text):
@@ -106,7 +110,10 @@ def make_parser():
         command = commands.add_parser(name)
         command.add_argument("--as-of", type=date.fromisoformat)
         mode = command.add_mutually_exclusive_group()
-        mode.add_argument("--public", action="store_true", help="Запросить свежую афишу KudaGo")
+        mode.add_argument(
+            "--public", action="store_true", help="Загрузить афишу и публичные тарифы"
+        )
+        mode.add_argument("--offline", action="store_true", help="Рассчитать без сети")
         mode.add_argument(
             "--archive", action="store_true", help="Показать прогноз с публичной афишей из архива"
         )
@@ -156,11 +163,34 @@ def build_dashboard(db, config, options, end, today):
         print("Публичный архив не загружен. Подробности в журнале.", file=sys.stderr)
         if options.archive:
             return 1
-    public_ready = options.public and ingest_public(db, config, today)
-    if options.public and not public_ready:
-        print("KudaGo недоступен. Используется автономная афиша.", file=sys.stderr)
+    live_schedule = None
+    use_archive = options.archive and archive_ready
+    if options.public:
+        print("Загружаю актуальную афишу Москвы", flush=True)
+        live_schedule = load_live_schedule(db, config, today)
+        if live_schedule:
+            print(f"Афиша загружена из {SOURCE_NAMES[live_schedule.source]}.", flush=True)
+        else:
+            use_archive = archive_ready
+            fallback = "локальный архив" if use_archive else "учебная афиша"
+            print(f"Онлайн-афиша недоступна. Используется {fallback}.", file=sys.stderr)
+        print("Загружаю публичные тарифы гостиниц", flush=True)
+    rates = collect_market_rates(db, config, RATE_ARCHIVE, today, online=options.public)
     if options.command != "ingest":
-        result = run(db, config, end, public_ready, options.archive and archive_ready)
+        result = run(db, config, end, archive=use_archive, live_schedule=live_schedule)
+        result["market_rates"] = rates
+        if REAL_ADR_VALIDATION.is_file():
+            result["real_adr_validation"] = json.loads(
+                REAL_ADR_VALIDATION.read_text(encoding="utf-8")
+            )
+        if options.public:
+            result["online_schedule"] = {
+                "source": result["event_source"],
+                "checked_at": live_schedule.checked_at
+                if live_schedule
+                else datetime.now(MSK).isoformat(),
+                "status": "live" if live_schedule else "fallback",
+            }
         render(options.out, result)
         for target, metrics in result["targets"].items():
             winner = metrics["winner"]
@@ -192,6 +222,13 @@ def main(argv=None):
     anchor = date.fromisoformat(config["as_of"])
     if options.command != "replay":
         today = datetime.now(MSK).date()
+        if (
+            options.command == "demo"
+            and not options.offline
+            and not options.archive
+            and options.as_of in (None, today)
+        ):
+            options.public = True
         end = options.as_of or (today if options.public else anchor)
         if options.public and end != today:
             parser.error("--public загружает снимок только на текущую дату.")

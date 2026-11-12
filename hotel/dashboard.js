@@ -6,15 +6,20 @@ const russianDate = new Intl.DateTimeFormat("ru-RU", {
     month: "short",
     timeZone: "UTC",
 });
+const moscowTime = new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "short", timeStyle: "short", timeZone: "Europe/Moscow",
+});
 const sourceLabels = {
     event_html: "Учебная",
     public_archive: "Публичный архив",
     kudago_json: "KudaGo",
+    mos_afisha: "Мосбилет",
 };
 const sourceDescriptions = {
     event_html: "Загрузка и цена на 14 дней. Учебные гостиницы и афиша смоделированы.",
     public_archive: "Открытые анонсы организаторов и учебные гостиницы. Архив выборочный. Качество прогноза на нём не измерялось.",
     kudago_json: "Учебные гостиницы и афиша KudaGo на будущие даты. Режим экспериментальный.",
+    mos_afisha: "Учебные гостиницы и выборка анонсов московского портала «Мосбилет».",
 };
 const chartSeries = [
     { key: "fact", color: "#35566b", width: 2 },
@@ -53,7 +58,7 @@ function table(headers, rows, highlight = () => false) {
 
 function eventLink(event) {
     const title = escapeHtml(event.title);
-    if (!event.url?.startsWith("https://")) return title;
+    if (typeof event.url !== "string" || !event.url.startsWith("https://")) return title;
     return `<a href="${escapeHtml(event.url)}" target="_blank" rel="noopener noreferrer">${title}</a>`;
 }
 
@@ -79,7 +84,50 @@ function configureFilters() {
     archiveDay.max = data.as_of;
     if (!archiveDay.value || archiveDay.value > data.as_of) archiveDay.value = data.as_of;
     renderArchive();
+    renderRates();
+    renderRealAdr();
     renderDashboard();
+}
+
+function renderRates() {
+    const groups = data.market_rates || [];
+    element("ratesPanel").hidden = groups.length === 0;
+    element("rates").innerHTML = `<p>Опубликованные цены за номер на сутки для двух гостей.
+        Наличие номера и стоимость на конкретную дату уточняются при бронировании.
+        Прогноз ADR выше рассчитан по учебным данным.</p>`
+        + groups.map((group) => {
+            const hotel = eventLink({ title: group.hotel, url: group.url });
+            if (group.status === "unavailable") return `<p>${hotel} · источник недоступен</p>`;
+            const time = moscowTime.format(new Date(group.checked_at));
+            const status = group.status === "live" ? "Загружено с сайта" : "Сохранённый снимок";
+            const rates = group.rates.map((rate) => [
+                rate.room,
+                `${formatNumber(rate.price_rub, 0)} ₽`,
+                rate.condition,
+                rate.valid_to ? `${rate.valid_from} — ${rate.valid_to}` : `с ${rate.valid_from}`,
+            ]);
+            return `<h3>${hotel}</h3><p>${status} · ${time} мск</p>
+                ${table(["Номер", "За сутки", "Условия", "Период по прайсу"], rates)}`;
+        }).join("");
+}
+
+function renderRealAdr() {
+    const result = data.real_adr_validation;
+    element("realAdrPanel").hidden = !result;
+    if (!result) return;
+    const paper = eventLink({ title: "Набор Hotel Booking Demand", url: result.paper });
+    const hotels = { H1: "Курортный отель, Алгарве", H2: "Городской отель, Лиссабон" };
+    const rows = Object.entries(result.hotels).map(([id, score]) => [
+        hotels[id], score.days, formatNumber(score.ridge.mae, 2), formatNumber(score.seasonal.mae, 2),
+        formatNumber(score.ridge.rmse, 2), formatNumber(score.seasonal.rmse, 2),
+    ]);
+    element("realAdr").innerHTML = `<p>${paper}. ${result.windows} выпусков по ${result.horizon} дней,
+        ${escapeHtml(result.test_start)} — ${escapeHtml(result.test_end)}.
+        Суточная ADR восстановлена по завершённым бронированиям. Ошибки приведены в денежных единицах набора.</p>
+        ${table(["Отель", "Дней", "MAE Ridge", "MAE сезонной медианы",
+        "RMSE Ridge", "RMSE сезонной медианы"], rows)}
+        <p>В этой проверке использованы календарь и история ADR. Для оценки точности на московских
+        гостиницах нужны их фактические продажи и выручка.</p>`;
 }
 
 function renderArchive() {
@@ -308,12 +356,13 @@ function renderLogs({ candidates, winner }) {
         formatNumber(model.validation.mae, 2), formatNumber(model.validation.rmse, 2),
     ]);
     const loads = data.journal.map((row) => [
-        row.source, row.through_day, row.status, row.added_slices, row.rows, row.flagged,
+        sourceLabels[row.source] || row.source, row.through_day, row.status, row.added_slices,
+        row.rows, row.flagged, row.detail,
     ]);
     element("logs").innerHTML = `<p>Чтобы повторить запуск, выполните <code>python -m hotel.cli replay ID</code>.</p>
         ${table(["ID", "Модель", "Настройки", "MAE", "RMSE"], runs, (index) => candidates[index].id === winner.id)}
         <p>Последние запуски загрузки</p>
-        ${table(["Источник", "До даты", "Статус", "Новых порций", "Строк", "Флаги"], loads)}`;
+        ${table(["Источник", "До даты", "Статус", "Новых порций", "Строк", "Флаги", "Сообщение"], loads)}`;
 }
 
 function renderDashboard() {
@@ -326,8 +375,13 @@ function renderDashboard() {
     const showForecast = view === "future";
 
     element("asof").textContent = `Дата расчёта · ${dateLabel(data.as_of)} ${data.as_of.slice(0, 4)}`;
-    element("mode").textContent = showForecast
+    const modeNote = showForecast
         ? sourceDescriptions[source] : "Отложенный тест на учебных гостиницах и синтетической афише.";
+    const online = showForecast && data.online_schedule?.source === source ? data.online_schedule : null;
+    const onlineNote = online?.status === "live"
+        ? ` Загружено ${moscowTime.format(new Date(online.checked_at))} мск.`
+        : online?.status === "fallback" ? " Онлайн-источники недоступны или не вернули событий." : "";
+    element("mode").textContent = modeNote + onlineNote;
     element("eventMode").disabled = !showForecast;
     element("future").setAttribute("aria-pressed", showForecast);
     element("test").setAttribute("aria-pressed", !showForecast);

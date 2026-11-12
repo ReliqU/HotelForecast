@@ -12,10 +12,8 @@ from .archive import ARCHIVE_SOURCE, parse_archive
 from .sources import (
     DAY,
     days,
-    fetch_events,
     html_feed,
     parse_html,
-    parse_public,
     room_feed,
 )
 
@@ -24,6 +22,11 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS raw (
   source TEXT, slice TEXT, sha256 TEXT NOT NULL, payload TEXT NOT NULL,
   PRIMARY KEY(source, slice)
+);
+CREATE INDEX IF NOT EXISTS raw_source_hash ON raw (source, sha256);
+CREATE TABLE IF NOT EXISTS online_heads (
+  source TEXT PRIMARY KEY, slice TEXT NOT NULL, checked_at TEXT NOT NULL,
+  FOREIGN KEY(source, slice) REFERENCES raw(source, slice)
 );
 CREATE TABLE IF NOT EXISTS rooms (
   hotel TEXT, day TEXT, available INTEGER NOT NULL, sold INTEGER, revenue REAL,
@@ -121,6 +124,43 @@ def save_raw(db, source, d, text):
     )
 
 
+def save_online_snapshot(db, source, checked_at, payload):
+    """Store the content once and track when the source last returned it."""
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    # Distinct responses can arrive on the same clock tick.
+    slice_key = f"{checked_at}#{digest}"
+    added = db.execute(
+        "INSERT INTO raw (source,slice,sha256,payload) "
+        "SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM raw WHERE source=? AND sha256=?)",
+        (source, slice_key, digest, payload, source, digest),
+    ).rowcount
+    stored = db.execute(
+        "SELECT slice FROM raw WHERE source=? AND sha256=? ORDER BY rowid DESC LIMIT 1",
+        (source, digest),
+    ).fetchone()[0]
+    db.execute(
+        "INSERT INTO online_heads VALUES (?,?,?) ON CONFLICT(source) DO UPDATE SET "
+        "slice=excluded.slice, checked_at=excluded.checked_at "
+        "WHERE excluded.checked_at>=online_heads.checked_at",
+        (source, stored, checked_at),
+    )
+    return added
+
+
+def latest_online_snapshot(db, source):
+    result = db.execute(
+        "SELECT raw.payload, online_heads.checked_at FROM online_heads "
+        "JOIN raw USING(source,slice) WHERE source=?",
+        (source,),
+    ).fetchone()
+    if result is not None:
+        return result
+    # Databases made before online_heads still hold their original snapshots.
+    return db.execute(
+        "SELECT payload,slice FROM raw WHERE source=? ORDER BY slice DESC LIMIT 1", (source,)
+    ).fetchone()
+
+
 def log(db, source, end, status, slices, rows, flagged, detail=None):
     db.execute(
         "INSERT INTO loads(source,through_day,status,added_slices,rows,flagged,detail) "
@@ -158,29 +198,6 @@ def ingest(db, cfg, end):
                 log(db, source, end, "failed", 0, 0, 0, f"{type(e).__name__}: {e}")
             raise
     return journal(db, 2)[::-1]
-
-
-def ingest_public(db, cfg, today):
-    source = "kudago_json"
-    try:
-        if db.execute(
-            "SELECT 1 FROM raw WHERE source=? AND slice=?", (source, str(today))
-        ).fetchone():
-            with db:
-                log(db, source, today, "ok", 0, 0, 0, "cached daily snapshot")
-            return True
-        first, last = today + DAY, today + cfg["horizon"] * DAY
-        data = fetch_events(cfg, first, last)
-        events, bad = parse_public(data, today, first, last)
-        with db:
-            save_raw(db, source, today, json.dumps(data, ensure_ascii=False))
-            save_events(db, source, events)
-            log(db, source, today, "ok", 1, len(events), bad)
-        return True
-    except Exception as e:
-        with db:
-            log(db, source, today, "failed", 0, 0, 0, f"{type(e).__name__}: {e}")
-        return False
 
 
 def ingest_archive(db, path, end):

@@ -1,0 +1,38 @@
+{
+  "paper": "https://doi.org/10.1016/j.dib.2018.11.126",
+  "source": "https://ars.els-cdn.com/content/image/1-s2.0-S2352340918315191-mmc2.zip",
+  "source_sha256": "6db57d635b9edec05f1cf9616ba6473e864909e4fc34819fa21cff58d518ee6a",
+  "test_start": "2017-04-10",
+  "test_end": "2017-07-30",
+  "windows": 8,
+  "horizon": 14,
+  "alpha": 1.0,
+  "hotels": {
+    "H1": {
+      "days": 112,
+      "ridge": {
+        "mae": 23.12075646471997,
+        "rmse": 29.26546807827635,
+        "n": 112
+      },
+      "seasonal": {
+        "mae": 28.98159227495744,
+        "rmse": 35.45746665082789,
+        "n": 112
+      }
+    },
+    "H2": {
+      "days": 112,
+      "ridge": {
+        "mae": 9.238546592769255,
+        "rmse": 12.384727166274711,
+        "n": 112
+      },
+      "seasonal": {
+        "mae": 10.37648353148448,
+        "rmse": 14.422879226632231,
+        "n": 112
+      }
+    }
+  }
+}

@@ -1,0 +1,88 @@
+[
+  {
+    "source": "taiga_rates",
+    "hotel": "Таёжный",
+    "url": "https://www.tbhotel.ru/prices/",
+    "checked_at": "2026-11-12T19:45:18.231217+03:00",
+    "rates": [
+      {
+        "room": "Стандарт",
+        "price_rub": 5900,
+        "condition": "С завтраком, справочно",
+        "valid_from": "2026-01-01",
+        "valid_to": null
+      },
+      {
+        "room": "Комфорт",
+        "price_rub": 7400,
+        "condition": "С завтраком, справочно",
+        "valid_from": "2026-01-01",
+        "valid_to": null
+      },
+      {
+        "room": "Люкс",
+        "price_rub": 8900,
+        "condition": "С завтраком, справочно",
+        "valid_from": "2026-01-01",
+        "valid_to": null
+      },
+      {
+        "room": "Люкс+",
+        "price_rub": 9900,
+        "condition": "С завтраком, справочно",
+        "valid_from": "2026-01-01",
+        "valid_to": null
+      }
+    ]
+  },
+  {
+    "source": "astrus_rates",
+    "hotel": "Аструс",
+    "url": "https://astrus.bronhotel.ru/",
+    "checked_at": "2026-11-12T19:45:18.160637+03:00",
+    "rates": [
+      {
+        "room": "Стандарт",
+        "price_rub": 9000,
+        "condition": "Будни, с завтраком",
+        "valid_from": "2026-01-12",
+        "valid_to": "2026-12-30"
+      },
+      {
+        "room": "Стандарт",
+        "price_rub": 10100,
+        "condition": "Выходные, с завтраком",
+        "valid_from": "2026-01-12",
+        "valid_to": "2026-12-30"
+      },
+      {
+        "room": "Комфорт",
+        "price_rub": 11800,
+        "condition": "Будни, с завтраком",
+        "valid_from": "2026-01-12",
+        "valid_to": "2026-12-30"
+      },
+      {
+        "room": "Комфорт",
+        "price_rub": 13330,
+        "condition": "Выходные, с завтраком",
+        "valid_from": "2026-01-12",
+        "valid_to": "2026-12-30"
+      },
+      {
+        "room": "Студия",
+        "price_rub": 13000,
+        "condition": "Будни, с завтраком",
+        "valid_from": "2026-01-12",
+        "valid_to": "2026-12-30"
+      },
+      {
+        "room": "Студия",
+        "price_rub": 14500,
+        "condition": "Выходные, с завтраком",
+        "valid_from": "2026-01-12",
+        "valid_to": "2026-12-30"
+      }
+    ]
+  }
+]

@@ -1,7 +1,7 @@
 import json
 import unittest
 from contextlib import closing
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -12,15 +12,16 @@ from hotel.archive import ARCHIVE_SOURCE, parse_archive
 from hotel.audit import audit_datasets, promote
 from hotel.cli import ROOT, render
 from hotel.features import FeatureStore
+from hotel.live import load_live_schedule
 from hotel.models import Hybrid, Ridge, Robust, predict
 from hotel.pipeline import replay, run, split
+from hotel.rates import collect_market_rates, parse_astrus, parse_taiga
 from hotel.sources import DAY, html_feed, parse_html, parse_public, room_feed
 from hotel.storage import (
     connect,
     fingerprint,
     ingest,
     ingest_archive,
-    ingest_public,
     normalize_rooms,
 )
 from hotel.stress import scenario_sets
@@ -122,6 +123,72 @@ class Inputs(unittest.TestCase):
         self.assertFalse(promote(comparison(3.9, 5.26)))
 
 
+class PublicRates(unittest.TestCase):
+    def test_public_tariffs_extract_two_guest_prices(self):
+        taiga = """
+            <p>Цены указаны справочно, для периода с 1 января 2026г.</p>
+            <table class="price">
+              <tr><th>Номер</th><th>За час</th><th>Сутки<span>один / двое</span></th></tr>
+              <tr><th>Стандарт</th><td>1700</td><td>4&nbsp;500 / 5&nbsp;900</td></tr>
+            </table>"""
+        astrus = """
+            <div class='prices__tab'>
+              <p>Цены на номера в отеле Аструс с 12 января до 30 декабря 2026</p>
+              <table>
+                <tr><th>Категория номера</th></tr>
+                <tr><th>2 гостя</th><th>1 гость</th></tr>
+                <tr><th>Будни</th><th>Выходные</th></tr>
+                <tr><td>Стандарт</td><td>9000</td><td>10100</td><td>8400</td><td>8590</td>
+                    <td>2500</td><td>2300</td></tr>
+              </table>
+            </div>"""
+        self.assertEqual(parse_taiga(taiga)[0]["price_rub"], 5900)
+        self.assertEqual([row["price_rub"] for row in parse_astrus(astrus)], [9000, 10100])
+        self.assertEqual(parse_astrus(astrus)[0]["valid_to"], "2026-12-30")
+
+    def test_rate_archive_keeps_the_original_timestamp_on_failure(self):
+        path = ROOT / "data" / "public_rates.json"
+        with (
+            closing(connect(":memory:", CFG)) as db,
+            patch("hotel.rates.request_html", side_effect=TimeoutError("test timeout")),
+        ):
+            before = fingerprint(db, ANCHOR)
+            snapshots = collect_market_rates(db, CFG, path, ANCHOR, online=True)
+            self.assertEqual(snapshots, collect_market_rates(db, CFG, path, ANCHOR, online=False))
+            self.assertEqual(len(snapshots), 2)
+            self.assertEqual({item["status"] for item in snapshots}, {"archive"})
+            self.assertEqual(fingerprint(db, ANCHOR), before)
+
+    def test_repeat_rates_reuse_storage_and_fallback_to_the_last_seen_prices(self):
+        path = ROOT / "data" / "public_rates.json"
+        sources = {item["source"]: item for item in json.loads(path.read_text(encoding="utf-8"))}
+
+        def fetch(provider, timeout):
+            source = sources[provider[0]]
+            rates = [dict(row, price_rub=row["price_rub"] + delta) for row in source["rates"]]
+            return dict(source, rates=rates, checked_at=stamp), f"<table>{delta}</table>", None
+
+        first_stamp = "2026-11-12T10:00:00.000000+03:00"
+        last_stamp = "2026-11-12T10:01:00.000000+03:00"
+        with closing(connect(":memory:", CFG)) as db:
+            with patch("hotel.rates.fetch_rates", side_effect=fetch):
+                for delta, stamp in (
+                    (0, first_stamp),
+                    (0, first_stamp),
+                    (100, first_stamp),
+                    (0, last_stamp),
+                ):
+                    latest = collect_market_rates(db, CFG, path, ANCHOR, online=True)
+            raw_counts = db.execute("SELECT count(*) FROM raw GROUP BY source").fetchall()
+            self.assertEqual([row[0] for row in raw_counts], [2, 2, 2, 2])
+            added = db.execute("SELECT added_slices FROM loads ORDER BY id").fetchall()
+            self.assertEqual([row[0] for row in added], [1, 1, 0, 0, 1, 1, 0, 0])
+            with patch("hotel.rates.request_html", side_effect=TimeoutError("test timeout")):
+                fallback = collect_market_rates(db, CFG, path, ANCHOR, online=True)
+            self.assertEqual(fallback, [dict(snapshot, status="archive") for snapshot in latest])
+            self.assertTrue(all(snapshot["checked_at"] == last_stamp for snapshot in fallback))
+
+
 class Integration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -164,14 +231,61 @@ class Integration(unittest.TestCase):
             self.assertEqual(ingest(db, CFG, start + DAY)[0]["rows"], 6)
 
     def test_public_outage_does_not_change_historical_data(self):
-        before = fingerprint(self.db, ANCHOR)
-        with patch("hotel.storage.fetch_events", side_effect=TimeoutError("test timeout")):
-            self.assertFalse(ingest_public(self.db, CFG, ANCHOR))
-        self.assertEqual(fingerprint(self.db, ANCHOR), before)
-        with patch("hotel.storage.fetch_events", return_value=[]):
-            self.assertTrue(ingest_public(self.db, CFG, ANCHOR))
-        with patch("hotel.storage.fetch_events", side_effect=AssertionError("should use cache")):
-            self.assertTrue(ingest_public(self.db, CFG, ANCHOR))
+        next_day = ANCHOR + DAY
+        item = dict(
+            id=100,
+            dateFrom=f"{next_day} 19:00:00",
+            dateTo=f"{next_day + 5 * DAY} 22:00:00",
+            title="Концерт",
+            venueLat="55.75",
+            venueLon="37.61",
+            url="/event/100",
+        )
+        with closing(connect(":memory:", CFG)) as db:
+            before = fingerprint(db, ANCHOR)
+            with (
+                patch("hotel.live.fetch_events", side_effect=TimeoutError("test timeout")),
+                patch("hotel.live.fetch_mos_afisha", return_value=[item]),
+            ):
+                schedule = load_live_schedule(db, CFG, ANCHOR)
+            self.assertEqual(schedule.source, "mos_afisha")
+            self.assertEqual([event["date"] for event in schedule.events], [next_day])
+            self.assertEqual(schedule.events[0]["published"], ANCHOR)
+            self.assertEqual(schedule.events[0]["url"], "https://bilet.mos.ru/event/100")
+            with (
+                patch("hotel.live.fetch_events", return_value=[]),
+                patch("hotel.live.fetch_mos_afisha", side_effect=TimeoutError("test timeout")),
+            ):
+                self.assertIsNone(load_live_schedule(db, CFG, ANCHOR))
+            self.assertEqual(
+                [row[0] for row in db.execute("SELECT status FROM loads ORDER BY id")],
+                ["failed", "ok", "empty", "failed"],
+            )
+            self.assertEqual(fingerprint(db, ANCHOR), before)
+
+    def test_online_events_deduplicate_even_at_the_same_timestamp(self):
+        item = dict(
+            id=101,
+            dateFrom=f"{ANCHOR + DAY} 19:00:00",
+            title="Концерт",
+        )
+        changed = dict(item, title="Новый концерт")
+        with (
+            closing(connect(":memory:", CFG)) as db,
+            patch("hotel.live.fetch_events", side_effect=TimeoutError("test timeout")),
+            patch("hotel.live.fetch_mos_afisha", side_effect=([item], [item], [changed])),
+            patch("hotel.live.datetime") as clock,
+        ):
+            clock.now.return_value = datetime.fromisoformat("2026-11-12T10:00:00+03:00")
+            for expected_title in (item["title"], item["title"], changed["title"]):
+                schedule = load_live_schedule(db, CFG, ANCHOR)
+                self.assertEqual(schedule.events[0]["title"], expected_title)
+            added = db.execute(
+                "SELECT added_slices FROM loads WHERE source='mos_afisha' ORDER BY id"
+            ).fetchall()
+            self.assertEqual([row[0] for row in added], [1, 0, 1])
+            raw = db.execute("SELECT count(*) FROM raw WHERE source='mos_afisha'").fetchone()
+            self.assertEqual(raw[0], 2)
 
     def test_future_rows_cannot_change_features_at_origin(self):
         origin = ANCHOR - 20 * DAY

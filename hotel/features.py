@@ -91,6 +91,13 @@ class FeatureStore:
     def available_events(self, origin, d, source):
         return [e for e in self.events[source, d] if e["published"] <= origin]
 
+    def replace_live_events(self, source, events):
+        """Use only the live snapshot obtained for this run."""
+        for key in [key for key in self.events if key[0] == source]:
+            del self.events[key]
+        for event in events:
+            self.events[source, event["date"]].append(event)
+
     def seasonal(self, hotel, origin, target_day, i):
         same = origin - ((origin.weekday() - target_day.weekday()) % 7) * DAY
         last = self.last(hotel, i, same)

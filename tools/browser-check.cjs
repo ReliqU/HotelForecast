@@ -29,11 +29,17 @@ const fs = require('node:fs');
     await page.goto(location);
     assert.equal(await page.locator('h1').textContent(), 'Прогноз для гостиниц');
     assert.equal(await page.locator('#mainChart rect.pick').count(), 14);
+    assert.equal(await page.locator('#rates tbody tr').count(), 10);
+    assert.equal(await page.locator('#rates h3 a').count(), 2);
+    assert.match(await page.locator('#rates').textContent(), /Таёжный/);
     const desktop = path.join(root, 'build', 'qa-dashboard.png');
     await page.screenshot({
         path: desktop,
         animations: 'disabled'
     });
+    await page.locator('#realAdrPanel summary').click();
+    assert.equal(await page.locator('#realAdr tbody tr').count(), 2);
+    assert.match(await page.locator('#realAdr').textContent(), /Лиссабон/);
     await page.locator('#eventMode').selectOption('public_archive');
     assert.match(await page.locator('#mode').textContent(), /Архив выборочный/);
     await page.locator('#day').focus();

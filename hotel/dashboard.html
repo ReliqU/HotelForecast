@@ -28,7 +28,7 @@ __HOTEL_STYLES__
                     Показатель
                     <select id="target">
                         <option value="occupancy">Загрузка</option>
-                        <option value="adr">Средняя цена</option>
+                        <option value="adr">Средняя цена (ADR)</option>
                     </select>
                 </label>
                 <label>Афиша <select id="eventMode"></select></label>
@@ -60,9 +60,17 @@ __HOTEL_STYLES__
             <aside class="panel side" id="detail"></aside>
         </div>
         <section class="sections">
+            <details id="ratesPanel" open>
+                <summary>Публичные цены гостиниц</summary>
+                <div class="inside" id="rates"></div>
+            </details>
             <details open>
                 <summary>Насколько точен прогноз</summary>
                 <div class="inside" id="quality"></div>
+            </details>
+            <details id="realAdrPanel">
+                <summary>Проверка Ridge на реальных бронированиях</summary>
+                <div class="inside" id="realAdr"></div>
             </details>
             <details id="confirmPanel">
                 <summary>Проверка новой схемы</summary>

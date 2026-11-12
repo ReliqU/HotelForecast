@@ -167,13 +167,15 @@ def fill_forecast(forecasts, feature_store, as_of, target, model, median_column)
                 )
 
 
-def run(db, cfg, as_of, public=False, archive=False):
+def run(db, cfg, as_of, archive=False, *, live_schedule=None):
     anchor = date.fromisoformat(cfg["as_of"])
     if as_of < anchor:
         raise ValueError(
             "Дата запуска должна быть не раньше опорной даты эксперимента из config.json."
         )
     fs = FeatureStore(db, cfg, as_of)
+    if live_schedule:
+        fs.replace_live_events(live_schedule.source, live_schedule.events)
     h = cfg["horizon"]
     sets, ends = datasets(fs, cfg, anchor)
     digest = fingerprint(db, anchor)
@@ -191,11 +193,13 @@ def run(db, cfg, as_of, public=False, archive=False):
     modes = (
         ["event_html"]
         + ([ARCHIVE_SOURCE] if archive_rows else [])
-        + (["kudago_json"] if public else [])
+        + ([live_schedule.source] if live_schedule else [])
     )
     if archive and not archive_rows:
         raise ValueError("Сначала загрузите архив публичной афиши.")
-    source = "kudago_json" if public else (ARCHIVE_SOURCE if archive else "event_html")
+    source = (
+        live_schedule.source if live_schedule else (ARCHIVE_SOURCE if archive else "event_html")
+    )
     forecast_dates = list(days(as_of + DAY, as_of + h * DAY))
     output = dict(
         as_of=str(as_of),
@@ -222,7 +226,7 @@ def run(db, cfg, as_of, public=False, archive=False):
         ),
         counts={
             table: db.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE {field}<=?", (str(as_of),)
+                f"SELECT COUNT(*) FROM {table} WHERE substr({field},1,10)<=?", (str(as_of),)
             ).fetchone()[0]
             for table, field in (("rooms", "day"), ("events", "published"), ("raw", "slice"))
         },

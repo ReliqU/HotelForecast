@@ -4,10 +4,19 @@ chcp 65001 >nul
 pushd "%~dp0" || exit /b 1
 
 if defined HOTEL_PYTHON goto custom_python
-if exist ".venv\Scripts\python.exe" goto project_python
-py -3 -c "import sys" >nul 2>&1
-if not errorlevel 1 goto python_launcher
-python -c "import sys" >nul 2>&1
+set "python_check=import sys; sys.exit(not (3, 11) <= sys.version_info[:2] <= (3, 14))"
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" -c "%python_check%" >nul 2>&1
+    if not errorlevel 1 goto project_python
+)
+for %%V in (3.12 3.13 3.14 3.11) do (
+    py -%%V -c "%python_check%" >nul 2>&1
+    if not errorlevel 1 (
+        set "python_version=%%V"
+        goto python_launcher
+    )
+)
+python -c "%python_check%" >nul 2>&1
 if not errorlevel 1 goto python_on_path
 echo Python 3.11-3.14 is required. Install Python for Windows from https://www.python.org/downloads/windows/
 set "launch_status=1"
@@ -22,7 +31,7 @@ goto collect_status
 goto collect_status
 
 :python_launcher
-py -3 -X utf8 tools\launch_dashboard.py %*
+py -%python_version% -X utf8 tools\launch_dashboard.py %*
 goto collect_status
 
 :python_on_path

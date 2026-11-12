@@ -1,4 +1,4 @@
-"""Deterministic offline source simulators and an optional KudaGo adapter."""
+"""Deterministic teaching feeds and public Moscow event sources."""
 
 import csv
 import html
@@ -11,11 +11,13 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 DAY = timedelta(days=1)
 MSK = timezone(timedelta(hours=3))
+USER_AGENT = "HotelForecast/1.0 (academic prototype)"
+MOS_AFISHA = "https://www.mos.ru/afisha/"
 KINDS = ("music", "expo", "sports", "other")
 WORD = {"music": "Концерт", "expo": "Выставка", "sports": "Турнир", "other": "Фестиваль"}
 VENUES = (
@@ -199,11 +201,20 @@ def parse_html(payload, published):
     return good, bad
 
 
+def request_html(url, timeout):
+    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=timeout) as response:
+        limit = 2_000_000
+        content = response.read(limit + 1)
+        if len(content) > limit:
+            raise ValueError("Страница больше допустимого размера.")
+        return content.decode(response.headers.get_content_charset() or "utf-8")
+
+
 def request_json(url, cfg):
     for n in range(cfg["request_retries"]):
         try:
             with urlopen(
-                Request(url, headers={"User-Agent": "HotelForecast/1.0 (academic prototype)"}),
+                Request(url, headers={"User-Agent": USER_AGENT}),
                 timeout=cfg["request_timeout"],
             ) as r:
                 return json.load(r)
@@ -219,7 +230,7 @@ def request_json(url, cfg):
     raise RuntimeError("no request attempts configured")
 
 
-def fetch_events(cfg, start, end, max_pages=10):
+def fetch_events(cfg, start, end, max_pages=2):
     def midnight_timestamp(day):
         return int(datetime.combine(day, datetime.min.time(), MSK).timestamp())
 
@@ -247,7 +258,7 @@ def fetch_events(cfg, start, end, max_pages=10):
             return results
         if urlparse(url).netloc != urlparse(base).netloc or urlparse(url).scheme != "https":
             raise ValueError("unexpected pagination URL")
-    raise ValueError("pagination limit; narrow the request interval")
+    return results
 
 
 def parse_public(items, snapshot, start, end):
@@ -287,7 +298,65 @@ def parse_public(items, snapshot, start, end):
                         lat=lat,
                         lon=lon,
                         kind=classify(title + " " + text),
+                        url=item.get("site_url"),
+                        basis="observed",
                     )
         except (ValueError, KeyError, TypeError, AttributeError, OSError, OverflowError):
             bad += 1
     return list(good.values()), bad
+
+
+def fetch_mos_afisha(cfg, start, end):
+    page = request_html(MOS_AFISHA, cfg["request_timeout"])
+    embedded = re.search(r'<script\b[^>]*\bid="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.S)
+    if embedded is None:
+        raise ValueError("На странице Мосбилета не найден список событий.")
+    props = json.loads(embedded[1])["props"]["pageProps"]
+    queries = props["dehydratedState"]["queries"]
+    return [
+        event
+        for query in queries
+        for block in query["state"]["data"].get("fullBlocks", {}).values()
+        for event in block.get("events", [])
+    ]
+
+
+def parse_mos_afisha(items, snapshot, start, end):
+    events = {}
+    rejected = 0
+    for item in items:
+        try:
+            # The listing gives the first and last show, not a daily schedule.
+            day = datetime.fromisoformat(item["dateFrom"]).date()
+            if not start <= day <= end:
+                continue
+            title = item["title"].strip()
+            if not title:
+                raise ValueError("Пустое название события.")
+            latitude, longitude = item.get("venueLat"), item.get("venueLon")
+            try:
+                latitude, longitude = float(latitude), float(longitude)
+                if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                    raise ValueError
+            except (TypeError, ValueError):
+                latitude = longitude = None
+            path = item.get("url") or ""
+            url = (
+                urljoin("https://bilet.mos.ru/", path) if path.startswith("/event/") else MOS_AFISHA
+            )
+            event_id = f"mos-{item['id']}-{day}"
+            events[event_id] = dict(
+                id=event_id,
+                date=day,
+                published=snapshot,
+                title=title,
+                venue=item.get("venueTitle") or "Москва",
+                lat=latitude,
+                lon=longitude,
+                kind=classify(f"{title} {item.get('sphere') or ''}"),
+                url=url,
+                basis="observed",
+            )
+        except (ValueError, KeyError, TypeError, AttributeError):
+            rejected += 1
+    return list(events.values()), rejected
